@@ -8,23 +8,26 @@ rocket is still under construction.
 
 ## Getting started
 
-1. Open `UMUT/rocket_upwork.slx` in Simulink.
-2. **Set MATLAB's current working folder to `UMUT/` before opening or
-   updating the model.** The model's `InitFcn` calls `matl;` (see
-   `UMUT/matl.m`), which only resolves with `UMUT/` as the working directory.
-   See `NOTES.md` for the full writeup of this fragility.
+1. Open `rocket_upwork.slx` in Simulink.
+2. **Set MATLAB's current working folder to the project root before opening
+   or updating the model.** The model's `InitFcn` calls `matl;` (see
+   `matl.m`), which only resolves with the project root as the working
+   directory. See `NOTES.md` for the full writeup of this fragility.
 3. Run/update the diagram as usual from there.
 
 ## Repository layout
 
-- `UMUT/rocket_upwork.slx` — the canonical master model (single source of
+- `rocket_upwork.slx` — the canonical master model (single source of
   truth for all simulation work).
-- `UMUT/matl.m` — the model's `InitFcn` source; builds the `rocket` struct
+- `matl.m` — the model's `InitFcn` source; builds the `rocket` struct
   (mass, geometry, CG/CP, propellant, thrust curves, LQR gains, etc.).
-- `UMUT/lqr_gain_design.m` — computes the LQR gain matrix used by the
+- `lqr_gain_design.m` — computes the LQR gain matrix used by the
   controller.
-- `UMUT/thrust_data.csv` / `UMUT/thrust_data_clean.csv` — static motor test
-  data (raw and cleaned) used to build the ascent thrust curve.
+- `thrust_data.csv` / `thrust_data_ascent_clean.csv` /
+  `thrust_data_descent_clean.csv` — static motor test data (raw and cleaned)
+  used to build the ascent/descent thrust curves. The descent file is
+  currently a placeholder (duplicate of the ascent data) pending real
+  descent motor test data.
 - `MODEL_WALKTHROUGH.md` — a guided, physical/logical-flow explanation of how
   the model works (plant, 6DOF integration, controller, actuator), meant to
   be read on its own without opening Simulink.
