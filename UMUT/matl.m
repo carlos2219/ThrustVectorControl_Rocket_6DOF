@@ -70,6 +70,20 @@ rocket.Ixx_burn = 0.018;
 
 rocket.I_burn = [rocket.Ixx_burn 0 0; 0 rocket.Iyy_burn 0;0 0 rocket.Izz_burn];
 
+rocket.Ixx_dry  = 0.002;  % kg*m^2, roll-axis inertia (about x_b, nose axis), empty
+rocket.Iyy_dry  = 0.05;   % kg*m^2, pitch-axis inertia (about y_b), empty
+rocket.Izz_dry  = 0.05;   % kg*m^2, yaw-axis inertia (about z_b), empty
+
+rocket.I_dry = [rocket.Ixx_dry 0 0; 0 rocket.Iyy_dry 0;0 0 rocket.Izz_dry];
+
+% Extra inertia contributed by full propellant load (rough approximation).
+rocket.Ixx_prop = 0.0002;
+rocket.Iyy_prop = 0.01;
+rocket.Izz_prop = 0.01;
+
+rocket.I_prop = [rocket.Ixx_prop 0 0; 0 rocket.Iyy_prop 0;0 0 rocket.Izz_prop];
+
+
 % Sea-level reference altitude for the atmosphere model.
 rocket.h_ref = 0;
 
@@ -151,18 +165,7 @@ rocket.servo.delay_s = 0.02;
 
 
 
-%% --- Editable parameters ---
-% Must stay identical to rocket.m_dry above (CLAUDE.md known gap on
-% duplicate parameter sets).
-m_dry    = 1.310;  % kg, mass with no propellant (structure + avionics + empty motors)
-m_prop   = 0.690;  % kg, total propellant mass (KNSB), 230 g x 3 motors
-t_burn   = 20;     % s, burn duration (must match ThrustMixer)
 
-Ixx_dry  = 0.002;  % kg*m^2, roll-axis inertia (about x_b, nose axis), empty
-Iyy_dry  = 0.05;   % kg*m^2, pitch-axis inertia (about y_b), empty
-Izz_dry  = 0.05;   % kg*m^2, yaw-axis inertia (about z_b), empty
 
-% Extra inertia contributed by full propellant load (rough approximation).
-Ixx_prop = 0.0002;
-Iyy_prop = 0.01;
-Izz_prop = 0.01;
+
+
