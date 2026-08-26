@@ -25,9 +25,11 @@ rocket is still under construction.
   controller.
 - `thrust_data.csv` / `thrust_data_ascent_clean.csv` /
   `thrust_data_descent_clean.csv` — static motor test data (raw and cleaned)
-  used to build the ascent/descent thrust curves. The descent file is
-  currently a placeholder (duplicate of the ascent data) pending real
-  descent motor test data.
+  used to build the ascent/descent thrust curves. **Current focus is ascent
+  only:** the descent file is a placeholder (duplicate of the ascent data)
+  pending real descent motor test data, and it is loaded into
+  `rocket.descent_thrust_curve_t/N` but not yet wired into `PerMotorThrust`
+  — descent motors still run on the flat `rocket.T_nominal` placeholder.
 - `MODEL_WALKTHROUGH.md` — a guided, physical/logical-flow explanation of how
   the model works (plant, 6DOF integration, controller, actuator), meant to
   be read on its own without opening Simulink.
@@ -51,5 +53,7 @@ rocket is still under construction.
 
 ## Status
 
-Active development, Milestone 1. See `CLAUDE.md`'s "Known gaps" section for
-the current list of open items and simplifications.
+Active development, Milestone 1, currently focused on the ascent stage only
+(descent thrust is still a flat placeholder, see Repository layout above).
+See `CLAUDE.md`'s "Known gaps" section for the current list of open items
+and simplifications.

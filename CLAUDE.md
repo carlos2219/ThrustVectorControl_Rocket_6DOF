@@ -467,7 +467,34 @@ Umut baseline" any more, just a reference point.
    addressed in a future milestone, not M1). A 40s `sim()` after this
    session's changes (mass/inertia/thrust-status parameterization, ascent
    curve un-truncated, UMUT folder consolidation) completed with no errors,
-   but apogee/touchdown were not re-extracted.
+   but apogee/touchdown were not re-extracted. Full flight now reaches
+   touchdown at t~24.3s (was ~14-20s range before today; consistent across
+   the solver-config change in item 16, both hit t=24.321s almost exactly).
+16. **Solver was badly mismatched to the problem, fixed, DONE, verified,
+   saved.** User reported the Simulink "Play" button feeling very slow.
+   Measured, not assumed: default config (`ode15s`, stiff/implicit,
+   `RelTol=1e-6`) took 249s wall-clock for 24.3s of simulated flight,
+   319,636 solver steps (average step ~76 microseconds - far finer than
+   the configured 1ms `MaxStep`, meaning the solver was choosing tiny steps
+   on its own via local error control, not hitting a cap). Root cause is
+   NOT primarily solver stiffness choice - switching to `ode45` alone only
+   helped partially (180s, 138,762 steps), proving the dominant cost was
+   the `1e-6` tolerance being far tighter than this model needs (likely
+   driven by the interpolated thrust curve's linear-segment derivative
+   kinks every ~0.5s, plus threshold-based force cutoffs like
+   `GroundReaction`/`LiftoffArm` that aren't flagged as zero-crossings, both
+   of which make a tight-tolerance variable-step solver repeatedly shrink
+   its step). `ode45` + `RelTol=1e-4` together: 30s wall-clock, 25,227
+   steps - an ~8x speedup, reaching the identical final time (24.321s) as
+   the original tight-tolerance run, so no accuracy loss observed for this
+   flight. Applied directly to the model's saved configuration
+   (`set_param('rocket_upwork','Solver','ode45')`,
+   `RelTol='1e-4'`) since that's what the Play button actually uses, not
+   left as a one-off `SimulationInput` override. `MaxStep=0.001` left
+   unchanged (not the binding constraint, harmless as a safety bound). Not
+   otherwise investigated: whether adding explicit zero-crossing detection
+   to `GroundReaction`/`LiftoffArm` would help further - deferred, not
+   necessary given the 8x win already achieved.
 
 ## Physics / math conventions
 - Full variable-inertia Euler equation: `M = I*omega_dot + I_dot*omega + omega x (I*omega)`.
