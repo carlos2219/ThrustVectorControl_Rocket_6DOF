@@ -1,0 +1,16 @@
+# Treat Simulink/MATLAB binary formats as binary (no line-ending conversion, no text diff)
+*.slx binary
+*.slxc binary
+*.mdl binary
+*.mat binary
+*.fig binary
+*.mexw64 binary
+*.mexw32 binary
+*.mexa64 binary
+
+# Text files: normalize to LF in the repo, let git convert on checkout
+*.m text
+*.md text
+*.csv text
+*.txt text
+*.json text

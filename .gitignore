@@ -1,0 +1,24 @@
+# Simulink / Stateflow build caches (regenerated automatically, never hand-edited)
+slprj/
+**/slprj/
+*.slxc
+
+# MATLAB autosave / temp
+*.asv
+*.autosave
+
+# Generated code (if code generation is ever run here)
+codegen/
+*.mex*
+
+# OS junk
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Claude Code local, machine-specific permission settings (not shared project config)
+.claude/settings.local.json
+
+# Editor/temp
+*.tmp
+~$*
