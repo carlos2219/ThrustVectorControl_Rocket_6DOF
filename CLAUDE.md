@@ -7,44 +7,77 @@ Design philosophy from client: simplicity, avoid over-engineering. Milestone-bas
 open-source intent. Physical rocket parameters are not final (client's rocket is
 still under construction).
 
+**Client's stated end goal (2026-08-26):** a single, abstracted, elegant
+plant block representing the rocket, decoupled enough from the controller
+that different control methodologies can be probed against it. Current
+work polishes the plant first (mass/inertia/thrust/CG realism); the
+controller (Umut's TVC/servo subsystems) is explicitly untouched until the
+plant is considered functional, at which point the client intends to
+revisit controller architecture separately.
+
 ## Repository layout
-- `UMUT/rocket_upwork.slx`: THE canonical master model, single source of truth.
+All active files now live flat at the PROJECT root - the old `UMUT/`
+subfolder was removed this session (client preference for a single project
+folder). See the cwd fragility note below for what this changes.
+- `rocket_upwork.slx`: THE canonical master model, single source of truth.
   Originally Umut's deliverable (mature Servo Actuator subsystem, TVC DCM
   Controller with LQR/DCM-based attitude error, "vee map"); as of the Phase A
   pivot this is where all integration work happens directly. No longer
   read-only, no longer mirrored into a separate SIM_model.
-- `UMUT/matl.m`: the real InitFcn source for `rocket_upwork.slx` (model InitFcn
+- `matl.m`: the real InitFcn source for `rocket_upwork.slx` (model InitFcn
   callback is the bare string `matl;`). Builds the `rocket` struct the model
   needs: rocket.DCM_ref, rocket.cg, rocket.cp, rocket.m, rocket.diameter,
   rocket.m_dry, rocket.n_engines, propellant masses, burn rate,
   rocket.x_cg_initial/rocket.x_cg_burnout, etc. Calls `lqr_gain_design;` the
-  same bare way. Both resolve only if MATLAB's cwd is `UMUT/` at load/update
-  time, see the cwd fragility note below.
-- `UMUT/lqr_gain_design.m`: computes rocket.lqr.K (LQR gain matrix), invoked
-  from `matl.m`.
+  same bare way. Both resolve only if MATLAB's cwd is the PROJECT root at
+  load/update time, see the cwd fragility note below. `matl.m` is now the
+  single source of truth for every editable plant parameter, including
+  MassInertiaModel's mass/inertia/burn-duration literals and Thrust Status's
+  descent ignition altitude, both previously hardcoded inside their MATLAB
+  Function block scripts (see Known gaps item 7).
+- `lqr_gain_design.m`: computes rocket.lqr.K (LQR gain matrix), invoked from
+  `matl.m`. Bug fixed this session: it was silently reading `rocket.Ixx`/
+  `Iyy`/`Izz` (unsuffixed), fields `matl.m` never actually defines (only
+  `Ixx_burn`/`Iyy_burn`/`Izz_burn` exist) - it only worked because a stale
+  `rocket.Ixx` from an earlier session was still sitting in the base MATLAB
+  workspace. A fresh `clear rocket; matl;` reproduced the failure
+  (`Unrecognized field name "Ixx"`) before the fix confirmed it. Now
+  correctly references `Ixx_burn`/`Iyy_burn`/`Izz_burn`.
 - `initFcn.m` (root): legacy, from the retired SIM_model era. Not executed by
   `rocket_upwork.slx`. Kept for reference only, not an active init path.
 - `NOTES.md` (root): working notes, currently just the cwd fragility writeup.
 - `ARCHIVE/`: retired files, the whole pre-pivot SIM_model lineage
   (`SIM_model.mdl`, `SIM_model_backup.slx`, `SIM_model_model_befMERGE.slx`,
   `SIM_model.slxc`), the redundant root `lqr_gain_design.m` (confirmed
-  byte-identical to `UMUT/lqr_gain_design.m`), the orphaned `MassInertiaModel.m`
-  (not Umut's work, a stray copy of Carlos's own file, see `ARCHIVE/README.txt`),
+  byte-identical to the active `lqr_gain_design.m` at the time it was
+  archived), the orphaned `MassInertiaModel.m` (not Umut's work, a stray
+  copy of Carlos's own file, see `ARCHIVE/README.txt`),
   `rocket_upwork.slx.original` (historical pristine reference, no longer the
   active source of truth, diverged from the active file before this session
-  even started), and `rocket_upwork.slx.r2024b` (Simulink's own auto-backup
-  from a format upgrade on save).
-- `UMUT/thrust_data.csv`: raw static motor test data (scale reading, kgf,
+  even started), `rocket_upwork.slx.r2024b` (Simulink's own auto-backup
+  from a format upgrade on save), and `rocket_upwork_OLDCHECK.slxc` (a
+  stray backup-looking build cache found alongside the active files during
+  the UMUT-folder consolidation; moved here rather than deleted since its
+  origin is unclear).
+- `thrust_data.csv`: raw static motor test data (scale reading, kgf,
   0.5s samples), extracted from a client video of a motor firing test.
   Includes pre-ignition dead time (t=0 to ~4s, exact zeros) and a
   post-burnout tare-drift artifact (t>=26.5s, negative readings, physically
   impossible as thrust). Kept untouched for traceability, no longer read
   directly by `matl.m`.
-- `UMUT/thrust_data_clean.csv`: user-cleaned copy of the above, pre-ignition
-  dead time and the tare-drift artifact trimmed off, time re-zeroed so t=0
-  is real motor ignition. This is what `matl.m` actually loads for
-  `rocket.ascent_thrust_curve_t/N`. Still RAW scale-reading data, not
-  corrected for motor mass loss during the burn, see Known gaps.
+- `thrust_data_ascent_clean.csv` (renamed from `thrust_data_clean.csv` this
+  session): user-cleaned copy of the above, pre-ignition dead time and the
+  tare-drift artifact trimmed off, time re-zeroed so t=0 is real motor
+  ignition. `matl.m` now loads this file IN FULL for
+  `rocket.ascent_thrust_curve_t/N` - no longer truncated to a manually
+  chosen duration, see Known gaps item 12. Still RAW scale-reading data, not
+  corrected for motor mass loss during the burn.
+- `thrust_data_descent_clean.csv` (new this session): currently just a
+  duplicate of the ascent file's data, a placeholder the client can
+  overwrite directly with real descent motor static-test data (same column
+  format). `matl.m` loads it into `rocket.descent_thrust_curve_t/N`, but
+  this is NOT yet wired into `PerMotorThrust` - descent still runs on the
+  flat `rocket.T_nominal` placeholder, see Known gaps item 12.
 
 ## Ownership split
 - Carlos: master Simulink file, full implementation/integration layer, Simscape/HIL,
@@ -169,28 +202,41 @@ Umut baseline" any more, just a reference point.
    inside the chart body. This is why `rocket_forces_moments` takes `r_cg` as
    an input rather than reading it, and why `AssembleRCG` does the same for
    its three geometry parameters.
-7. **Duplicate parameter sets: `m_dry`/`m_prop` reconciled, DONE, verified,
-   saved; other fields still independent by convention only.**
-   `MassInertiaModel(t)`'s local `m_dry` and `m_prop` literals now match
-   `rocket.*` in `matl.m` exactly (both `m_dry=1.310`, both `m_prop=0.690`,
-   confirmed via direct comparison of the live chart script against
-   `matl.m`). `m_prop` was silently wrong before this session (0.05 kg, not
-   matching either the old or new `rocket.*` propellant total) and had to be
-   corrected alongside `m_dry` to satisfy `m(t=0)=2.000 kg` exactly; flagged
-   to the user as a necessary addition beyond the originally scoped `m_dry`
-   fix before making it. `t_burn=20` (local to `MassInertiaModel`, a single
-   linear ramp covering the whole burn) remains independent from
-   `rocket.t_burn_ascent`/`rocket.t_burn_descent` by convention, not by
-   reference, still not consolidated into one source of truth. Do not
-   silently merge further without flagging it first.
+7. **Duplicate parameter sets: fully resolved for MassInertiaModel, DONE,
+   verified, saved.** `MassInertiaModel` no longer hardcodes ANY parameter
+   locally. `m_dry`, `m_prop`, `t_burn`, `I_dry`, `I_prop` are now explicit
+   input ports fed by Constant blocks (`Value = rocket.m_dry`,
+   `rocket.m_prop_total`, `rocket.mass_burn_duration`, `rocket.I_dry`,
+   `rocket.I_prop`) inside `Forces and Moments/Forces and Moments`, same
+   single-hop pattern as `XcgInitial`/`XcgBurnout`. `rocket.I_dry`/
+   `rocket.I_prop` already existed in `matl.m` before this session but were
+   silently unused - `MassInertiaModel` had its own byte-identical hardcoded
+   copies instead (`Ixx_dry=0.002` etc.), exactly the kind of duplication
+   flagged for review; now `matl.m`'s fields are the only copy, passed in as
+   3x3 matrices (`I = I_dry + I_prop*(1-frac_burned)` works directly on the
+   matrices since both are diagonal by construction, no need to unpack to
+   scalars). `rocket.m_prop_total` is a new field
+   (`n_engines*(m_prop_ascent_each+m_prop_descent_each) = 0.690`, matches
+   the old hardcoded value exactly). `t_burn` renamed to
+   `rocket.mass_burn_duration = 20` and moved to `matl.m` - INTENTIONALLY
+   still independent from `rocket.t_burn_ascent`/`t_burn_descent` (this
+   model's mass depletion is one continuous linear ramp from t=0, not two
+   separate phase burns), flagged to the user rather than silently merged.
+   Verified via `Update Diagram` (clean) and a 40s `sim()` from a fresh
+   `clear rocket; matl;` state (no stale-workspace masking possible).
 8. **`MassInertiaModel`'s `I` is diagonal-only and NOT coupled to `x_cg(t)`.**
-   `Ixx/Iyy/Izz` are an independent linear blend of hardcoded `_dry`/`_dry+_prop`
-   literals, with no parallel-axis correction tied to the CG shift `x_cg(t)`
+   `I = I_dry + I_prop*(1-frac_burned)` is an independent linear blend of
+   `rocket.I_dry`/`rocket.I_prop` (now fed in from `matl.m`, see item 7 -
+   this item is about the modeling simplification, not the parameter
+   source), with no parallel-axis correction tied to the CG shift `x_cg(t)`
    tracks. Since the 6DOF block requires `I` about the instantaneous CG (item
    1), this is a known, deliberate simplification, not a rigorous model,
-   accepted for M1 per the client's simplicity philosophy. Revisit if a
-   sensitivity study shows high sensitivity to inertia. Documented in a comment
-   inside `MassInertiaModel`'s script itself, not just here.
+   accepted for M1 per the client's simplicity philosophy - explicitly
+   reconfirmed acceptable by the client this session, on the condition that
+   every parameter still lives in `matl.m`, not hardcoded inside a function
+   (satisfied by item 7). Revisit if a sensitivity study shows high
+   sensitivity to inertia. Documented in a comment inside `MassInertiaModel`'s
+   script itself, not just here.
    **Measurement status of `rocket.Iyy`/`rocket.Izz`/`rocket.Ixx` in
    `matl.m`** (the LQR-facing inertia, separate from `MassInertiaModel`'s own
    local `Ixx_dry`/`Iyy_dry`/`Izz_dry` literals above): `Iyy = Izz = 0.338
@@ -243,26 +289,43 @@ Umut baseline" any more, just a reference point.
    NaN/Inf, `DCM` stays properly bounded in [-1,1], and Phase A's `r_cg(0) =
    -0.10 m` still matches exactly (this routing fix touched nothing in the
    x_cg(t)/AssembleRCG path).
-10. **cwd fragility on `matl.m`/InitFcn, documented, not fixed.** See
-   `NOTES.md` for the full writeup. Short version: `rocket_upwork.slx`'s
-   InitFcn is the bare string `matl;`, which only resolves if MATLAB's cwd is
-   `UMUT/` at load/update time (same constraint on `matl.m`'s own
-   `lqr_gain_design;` call). Confirmed live, repeatedly, this session, forget
-   to `cd` into `UMUT/` first and Update Diagram fails with unrelated-looking
-   Constant-block errors.
-11. **`rocket.t_burn_ascent` was 2.5 s, unexplained, fixed to 10 s, DONE,
+10. **cwd fragility on `matl.m`/InitFcn, documented, not fixed - now requires
+   PROJECT root instead of `UMUT/`.** See `NOTES.md` for the full writeup
+   (written when the constraint was still about `UMUT/`; the mechanism is
+   unchanged, only the required folder moved). Short version:
+   `rocket_upwork.slx`'s InitFcn is the bare string `matl;`, which only
+   resolves if MATLAB's cwd is the PROJECT root at load/update time (same
+   constraint on `matl.m`'s own `lqr_gain_design;` call and its CSV
+   `readtable` calls, all of which use `fileparts(mfilename('fullpath'))`
+   relative to `matl.m`'s own location, now the PROJECT root). The `UMUT/`
+   subfolder was removed this session (client preference for a single
+   project folder, not a fix to this underlying fragility) - `matl.m`,
+   `lqr_gain_design.m`, `rocket_upwork.slx`, and the thrust CSVs all now sit
+   directly in the PROJECT root alongside `CLAUDE.md`/`NOTES.md`/etc.
+   Verified working from the new location: `open_system` + `Update Diagram`
+   + a 40s `sim()` all succeeded with cwd = PROJECT root.
+11. **`rocket.t_burn_ascent` was 2.5 s, unexplained, fixed to 10 s, then later
+   superseded to be DERIVED from the real thrust curve (~21.5 s), DONE,
    verified, saved.** Pre-existing bug, unrelated to the mass/CG
    reconciliation task it was found during, fixed opportunistically because
    it lives in `Thrust Status`, the chart later touched for per-motor thrust
-   work (item 12). Client-confirmed ascent fuel burn time is 10 s; the file
-   had 2.5 s with no on-disk history to explain why (not a git repo, no
-   backup copy anywhere in the project shows a different prior value).
+   work (item 12). Client-confirmed ascent fuel burn time was 10 s at the
+   time; the file had 2.5 s with no on-disk history to explain why.
    Confirmed via chart-code tracing, not assumed, that nothing downstream
    depended on the wrong value: `Thrust Status`'s phase transitions are
-   altitude/velocity-triggered (`h<=15m && vertical_velocity<0` for the
-   descent-ignition transition), not offset from `ascent_burn_time` by a
-   fixed duration, so the fix only changes when ascent thrust cuts off, nothing
-   else. Verified the transition now happens at exactly t=10s (was t=2.5s).
+   altitude/velocity-triggered (`h<=ignition_altitude` for the
+   descent-ignition transition, see item 12's `ignition_altitude`
+   parameterization), not offset from `ascent_burn_time` by a fixed
+   duration.
+   **Superseded this session, per explicit client instruction:**
+   `rocket.t_burn_ascent` is no longer a manually chosen number at all - it
+   is now `rocket.ascent_thrust_curve_t(end)`, i.e. whatever the last
+   timestamp in `thrust_data_ascent_clean.csv` happens to be (currently
+   21.5s, since the ascent curve is no longer truncated to a manually
+   picked window, see item 12). This means the ascent burn duration now
+   updates automatically whenever the client replaces the CSV with new
+   static-test data - no code change needed. Verified fresh via
+   `clear rocket; matl;`: `rocket.t_burn_ascent = 21.500`.
 12. **Per-motor thrust, DONE, verified, saved.** New MATLAB Function block
    `PerMotorThrust` (in `Subsystem`, alongside `Thrust Status`) replaces the
    old `Gain1=[1;1;1]` scalar broadcast between `Thrust Status` and
@@ -282,19 +345,47 @@ Umut baseline" any more, just a reference point.
    `time_in_phase = t` directly; for phase==3,
    `time_in_phase = descent_burn_time - remaining_fuel_time_s`. `phase==3`
    confirmed to be the descent phase via chart-code inspection, not assumed.
-   Ascent motors: real static test data now in use via
-   `rocket.ascent_thrust_curve_t`/`_N`, loaded from `thrust_data_clean.csv`
-   (see Repository layout), sliced to the first 10 s per explicit client
-   instruction (project history, 2026-08-17: "use approximately the first
-   10 seconds of the measured thrust profile" for ascent), converted
-   kgf->N (`*9.81`). This is RAW scale-reading data, NOT corrected for motor
-   mass loss during the burn (the scale under-reads true thrust as the motor
-   gets lighter over time, per the client's own framing), used as-is per the
-   client's simplicity directive for M1. Descent motors: unchanged, still
-   flat `rocket.T_nominal = 8.0 N` placeholder, per the same 2026-08-17
-   client message. All eML/struct-resolution inputs (curve arrays,
-   `T_nominal`, `thrust_pert`, `ignition_delay`) passed in as explicit ports
-   fed by Constant blocks, same pattern as item 6.
+   Ascent motors: real static test data in use via
+   `rocket.ascent_thrust_curve_t`/`_N`, loaded from
+   `thrust_data_ascent_clean.csv` (renamed from `thrust_data_clean.csv`
+   this session, see Repository layout), converted kgf->N (`*9.81`). This is
+   RAW scale-reading data, NOT corrected for motor mass loss during the burn
+   (the scale under-reads true thrust as the motor gets lighter over time,
+   per the client's own framing), used as-is per the client's simplicity
+   directive for M1. Descent motors: unchanged, still flat
+   `rocket.T_nominal = 8.0 N` placeholder. All eML/struct-resolution inputs
+   (curve arrays, `T_nominal`, `thrust_pert`, `ignition_delay`) passed in as
+   explicit ports fed by Constant blocks, same pattern as item 6.
+
+   **Updated this session, per explicit client instruction:** the ascent
+   curve was originally sliced to the first 10 s (project history,
+   2026-08-17: "use approximately the first 10 seconds of the measured
+   thrust profile"). That truncation was REMOVED - `matl.m` now loads
+   `thrust_data_ascent_clean.csv` in full (the real motor burn runs to
+   ~21.5 s), and `rocket.t_burn_ascent` is derived directly from the
+   curve's own last timestamp instead of a manually chosen number (see item
+   11). `PerMotorThrust`'s `interp1(...,'linear','extrap')` clamp against
+   `ascent_thrust_curve_t(end)` needed no code change, it already tracked
+   the curve's real length automatically.
+
+   Also new this session: `thrust_data_descent_clean.csv` (currently a
+   duplicate of the ascent data, see Repository layout) is loaded into
+   `rocket.descent_thrust_curve_t/N`, prepared as a drop-in slot for real
+   descent motor data, but **deliberately NOT wired into `PerMotorThrust`
+   yet** - doing so would silently replace the flat `T_nominal` placeholder
+   with a declining curve shape/magnitude for the descent/landing phase,
+   a real physics change that should be a separate, flagged decision, not a
+   side effect of file prep. Descent phase in `PerMotorThrust` still uses
+   `T_nominal` exactly as before.
+
+   Also new this session: `Thrust Status`'s descent-ignition altitude
+   threshold (`ignition_altitude_m = 15`, previously hardcoded inside the
+   chart script) is now an explicit `ignition_altitude` input port, fed by
+   a new `IgnitionAltitude` Constant block (`Value =
+   rocket.descent_ignition_altitude_m`) inside `Subsystem`, same
+   single-hop-Constant pattern as `Constant`/`Constant1`/`Constant2`
+   feeding `ascent_burn_time`/`descent_burn_time`/`nominal_thrust`. No
+   behavior change (still 15 m), just no longer hardcoded outside `matl.m`.
 13. **Launch-pad ground reaction physics, DONE, verified, saved.** Item 12's
    real thrust curve exposed a genuine physics gap that did not exist with
    the old flat-8N placeholder: per-motor thrust takes ~1-1.5s to exceed the
@@ -363,12 +454,20 @@ Umut baseline" any more, just a reference point.
    during the ascent/active-control phase, NOT near touchdown, since
    late-flight chaos would swamp any real signal from the swept parameter
    with numerical noise unrelated to it.
-15. **Current full-flight baseline** (default params, all of today's changes
-   combined, i.e. items 1, 3/5/7/8/11 (mass/CG), 12 (per-motor thrust), 13
-   (ground reaction) together): liftoff arms ~t=1.98s, apogee ~120-130m
-   @ t~13.7-14.6s (varies run to run per item 14), touchdown ~66-77 m/s
-   (pre-existing hard-landing behavior, unrelated to today's work, expected
-   to be addressed in a future milestone, not M1).
+15. **Full-flight baseline numbers below are STALE as of the parameter-
+   consolidation session** (ascent burn duration changed from a manual 10s
+   to the real ~21.5s curve, item 11/12) - liftoff timing, apogee, and
+   touchdown will all differ from these figures and have not been
+   re-measured yet. Re-derive before relying on these for anything
+   quantitative. Original baseline (default params, items 1, 3/5/7/8/11
+   (mass/CG), 12 (per-motor thrust), 13 (ground reaction) together, ascent
+   burn = 10s): liftoff arms ~t=1.98s, apogee ~120-130m @ t~13.7-14.6s
+   (varies run to run per item 14), touchdown ~66-77 m/s (pre-existing
+   hard-landing behavior, unrelated to that session's work, expected to be
+   addressed in a future milestone, not M1). A 40s `sim()` after this
+   session's changes (mass/inertia/thrust-status parameterization, ascent
+   curve un-truncated, UMUT folder consolidation) completed with no errors,
+   but apogee/touchdown were not re-extracted.
 
 ## Physics / math conventions
 - Full variable-inertia Euler equation: `M = I*omega_dot + I_dot*omega + omega x (I*omega)`.
@@ -387,6 +486,16 @@ Umut baseline" any more, just a reference point.
   frame (`Xe(3)` positive-down).
 
 ## Style & engineering preferences
+- **Every editable parameter belongs in `matl.m`, never hardcoded inside a
+  MATLAB Function/Stateflow chart script.** Explicit client directive
+  (2026-08-26): "as long as we keep every parameter in a single main file
+  matl.m (not hid into a hardcoded variable inside a function) - this
+  applies for every variable/parameter." Applies going forward to any new
+  plant-side block; feed values in as explicit input ports fed by Constant
+  blocks with `Value = rocket.<field>` (see item 6 in Known gaps for why -
+  eML/Stateflow chart scripts cannot resolve `rocket.*` struct fields
+  internally). Does not apply to the controller (Umut's TVC/servo
+  subsystems), which is explicitly off-limits for now, see Ownership split.
 - Prefer native Simulink visual blocks over MATLAB Function blocks. Reserve MATLAB
   Function blocks for logic that genuinely needs it (e.g. cross-product loops).
 - No persistent variables in MATLAB Function blocks under continuous solvers

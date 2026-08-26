@@ -41,16 +41,38 @@ rocket.n_engines = 3;
 
 % Per-motor propellant mass, kg, client-measured. Informational only -
 % PerMotorThrust uses the real thrust curve directly, and
-% MassInertiaModel uses its own local m_prop total.
+% MassInertiaModel uses rocket.m_prop_total below (fed in as an explicit
+% input, no longer a hardcoded local, see MassInertiaModel's script).
 rocket.m_prop_ascent_each = 0.115;
 rocket.m_prop_descent_each = 0.115;
 % Per-motor burn rate, kg/s. Informational only, not consumed live.
 rocket.burn_rate_each = 0.230 / 20;
 
-% Client-confirmed ascent fuel burn time (was a stale 2.5s, unexplained).
-rocket.t_burn_ascent = 10;
+% Total propellant mass across all 3 motors, both phases, kg. Feeds
+% MassInertiaModel's m_prop input. Must stay consistent with m0_computed
+% below (same formula).
+rocket.m_prop_total = rocket.n_engines * ...
+    (rocket.m_prop_ascent_each + rocket.m_prop_descent_each);
+
+% Mass-depletion-model burn duration, s. Feeds MassInertiaModel's t_burn
+% input. This is INTENTIONALLY independent from t_burn_ascent/t_burn_descent
+% below (MassInertiaModel models one continuous linear depletion from t=0,
+% not the two separate ascent/descent burn phases) - see CLAUDE.md known
+% gaps on this duplicate-by-convention split. Not silently merged with
+% t_burn_ascent+t_burn_descent even though they currently sum to the same
+% 20s, do not assume this is guaranteed to stay true.
+rocket.mass_burn_duration = 20;
+
+% Descent motor ignition altitude, m (triggers ascent-coast -> descent-burn
+% phase transition once descending through this altitude). Feeds Thrust
+% Status's ignition_altitude input.
+rocket.descent_ignition_altitude_m = 15;
+
 % Descent motor burn duration, s, client-confirmed.
 rocket.t_burn_descent = 10;
+% rocket.t_burn_ascent is set below, after the ascent thrust curve loads -
+% it is now DERIVED from the real thrust curve's own duration (its last
+% timestamp), not a manually chosen number.
 
 % Total initial (fueled) mass. m_dry already includes casings, not added
 % again here.
@@ -62,14 +84,16 @@ rocket.m0_computed = ...
 rocket.m = rocket.m0_computed;
 
 % LQR-facing inertia diagonal, kg*m^2, used by lqr_gain_design.m. Separate
-% from MassInertiaModel's own local inertia literals (CLAUDE.md item 8).
 % Iyy/Izz measured (bifilar pendulum). Ixx still a placeholder guess.
+rocket.Ixx_burn = 0.018;
 rocket.Iyy_burn = 0.338;
 rocket.Izz_burn = 0.338;
-rocket.Ixx_burn = 0.018;
 
 rocket.I_burn = [rocket.Ixx_burn 0 0; 0 rocket.Iyy_burn 0;0 0 rocket.Izz_burn];
 
+% Feeds MassInertiaModel's I_dry input directly (3x3 matrix port, no
+% longer hardcoded inside the chart - was previously a silent duplicate of
+% these exact fields, now the single source of truth).
 rocket.Ixx_dry  = 0.002;  % kg*m^2, roll-axis inertia (about x_b, nose axis), empty
 rocket.Iyy_dry  = 0.05;   % kg*m^2, pitch-axis inertia (about y_b), empty
 rocket.Izz_dry  = 0.05;   % kg*m^2, yaw-axis inertia (about z_b), empty
@@ -77,6 +101,7 @@ rocket.Izz_dry  = 0.05;   % kg*m^2, yaw-axis inertia (about z_b), empty
 rocket.I_dry = [rocket.Ixx_dry 0 0; 0 rocket.Iyy_dry 0;0 0 rocket.Izz_dry];
 
 % Extra inertia contributed by full propellant load (rough approximation).
+% Feeds MassInertiaModel's I_prop input, same as I_dry above.
 rocket.Ixx_prop = 0.0002;
 rocket.Iyy_prop = 0.01;
 rocket.Izz_prop = 0.01;
@@ -127,17 +152,33 @@ rocket.T_total_nominal = ...
     rocket.n_engines * rocket.T_nominal;
 
 % Ascent motor thrust curve: real static test data (client motor firing
-% video), first 10s per client instruction. Loaded from
-% thrust_data_clean.csv, a pre-cleaned copy of thrust_data.csv (dead time
-% and tare-drift artifact trimmed, time re-zeroed to ignition). Still raw
-% scale-reading data, not corrected for motor mass loss during burn - used
-% as-is per client's simplicity directive for M1. Descent motors keep the
-% flat rocket.T_nominal placeholder.
-thrustDataPath = fullfile(fileparts(mfilename('fullpath')), 'thrust_data_clean.csv');
+% video), loaded from thrust_data_ascent_clean.csv (renamed from
+% thrust_data_clean.csv), a pre-cleaned copy of thrust_data.csv (dead time
+% and tare-drift artifact trimmed, time re-zeroed to ignition). Used in
+% full now, not truncated to a manually chosen duration - t_burn_ascent
+% below is DERIVED from this curve's own last timestamp instead, so the
+% ascent burn time updates automatically whenever this file is replaced
+% with new client data. Still raw scale-reading data, not corrected for
+% motor mass loss during burn - used as-is per client's simplicity
+% directive for M1.
+thrustDataPath = fullfile(fileparts(mfilename('fullpath')), 'thrust_data_ascent_clean.csv');
 thrustDataTbl = readtable(thrustDataPath);
-ascentMask = thrustDataTbl.time_seconds <= 10;
-rocket.ascent_thrust_curve_t = thrustDataTbl.time_seconds(ascentMask)';
-rocket.ascent_thrust_curve_N = thrustDataTbl.scale_reading_kg(ascentMask)' * 9.81;
+rocket.ascent_thrust_curve_t = thrustDataTbl.time_seconds';
+rocket.ascent_thrust_curve_N = thrustDataTbl.scale_reading_kg' * 9.81;
+rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);
+
+% Descent motor thrust curve: NOT yet wired into PerMotorThrust (descent
+% still runs on the flat rocket.T_nominal placeholder, unchanged this
+% round - wiring it in would silently change descent-phase thrust
+% magnitude/shape, flagging rather than doing it silently). File is
+% currently just a duplicate of the ascent data
+% (thrust_data_descent_clean.csv), a placeholder the client can overwrite
+% with real descent motor static-test data directly, same column format
+% as the ascent file.
+descentThrustDataPath = fullfile(fileparts(mfilename('fullpath')), 'thrust_data_descent_clean.csv');
+descentThrustDataTbl = readtable(descentThrustDataPath);
+rocket.descent_thrust_curve_t = descentThrustDataTbl.time_seconds';
+rocket.descent_thrust_curve_N = descentThrustDataTbl.scale_reading_kg' * 9.81;
 
 % Per-motor sensitivity parameters for PerMotorThrust, both zero by default
 % (symmetric baseline, no artificial imbalance).
