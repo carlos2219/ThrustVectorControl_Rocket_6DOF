@@ -9,7 +9,7 @@ rocket.cp = [0.88, 0, 0];
 %values). Measured from nose tip, positive aft. NOTE: not yet consumed by
 %MassInertiaModel(t) in SIM_model, which currently duplicates its own local
 %x_cg_initial/x_cg_burnout literals instead of reading this struct - see
-%CLAUDE.md known gap on duplicate/inconsistent parameter sets, needs reconciling.
+%ENGINEERING_LOG.md known gap on duplicate/inconsistent parameter sets, needs reconciling.
 rocket.x_cg_initial = 0.50; % m, TBD - CG at ignition (full propellant)
 rocket.x_cg_burnout = 0.46; % m, TBD - CG at burnout (empty)
 

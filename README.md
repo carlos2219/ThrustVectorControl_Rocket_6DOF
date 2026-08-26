@@ -33,9 +33,8 @@ rocket is still under construction.
 - `MODEL_WALKTHROUGH.md` — a guided, physical/logical-flow explanation of how
   the model works (plant, 6DOF integration, controller, actuator), meant to
   be read on its own without opening Simulink.
-- `CLAUDE.md` — the engineering log: design decisions, known gaps,
-  verification notes, and style conventions for this project. Read this
-  before making non-trivial changes.
+- `ENGINEERING_LOG.md` — design decisions, known gaps, and style
+  conventions for this project. Read this before making non-trivial changes.
 - `NOTES.md` — working notes (currently the `matl.m`/InitFcn working-directory
   fragility writeup).
 - `ARCHIVE/` — retired files kept for historical reference only (the
@@ -55,5 +54,5 @@ rocket is still under construction.
 
 Active development, Milestone 1, currently focused on the ascent stage only
 (descent thrust is still a flat placeholder, see Repository layout above).
-See `CLAUDE.md`'s "Known gaps" section for the current list of open items
-and simplifications.
+See `ENGINEERING_LOG.md`'s "Known gaps" section for the current list of
+open items and simplifications.

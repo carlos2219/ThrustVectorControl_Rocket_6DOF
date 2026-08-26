@@ -16,7 +16,7 @@ Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
 
-# Claude Code local, machine-specific settings and session lock files (not shared project config)
+# Local, machine-specific settings and session lock files (not shared project config)
 .claude/settings.local.json
 .claude/*.lock
 

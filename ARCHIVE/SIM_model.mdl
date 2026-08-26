@@ -1763,7 +1763,7 @@ Izz_prop = 0.01;
 % Axial CG travel, TBD PLACEHOLDERS pending Kruthick&apos;s measured values.
 % Duplicated here (not read from rocket.x_cg_initial / rocket.x_cg_burnout in
 % initFcn.m) to match this block&apos;s existing self-contained parameter style;
-% see CLAUDE.md known gap on duplicate/inconsistent parameter sets.
+% see ENGINEERING_LOG.md known gap on duplicate/inconsistent parameter sets.
 % Convention: measured from nose tip, positive aft (matches rocket.cg in initFcn.m).
 x_cg_initial = 0.50; % m, TBD PLACEHOLDER - CG at ignition (full propellant)
 x_cg_burnout = 0.46; % m, TBD PLACEHOLDER - CG at burnout (empty), propellant is

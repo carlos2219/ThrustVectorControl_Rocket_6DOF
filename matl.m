@@ -10,7 +10,7 @@
 clearvars
 
 % Body-from-Earth DCM, ~89.9 deg pitch launch attitude. Not measured, and not
-% wired to the controller (see CLAUDE.md known gap item 2).
+% wired to the controller (see ENGINEERING_LOG.md known gap item 2).
 rocket.DCM_ref = [0.001745328365898, 0, -0.999998476913288;
                   0, 1, 0;
                   0.999998476913288, 0, 0.001745328365898];
