@@ -494,7 +494,34 @@ Umut baseline" any more, just a reference point.
    unchanged (not the binding constraint, harmless as a safety bound). Not
    otherwise investigated: whether adding explicit zero-crossing detection
    to `GroundReaction`/`LiftoffArm` would help further - deferred, not
-   necessary given the 8x win already achieved.
+   necessary given the 8x win already achieved. User separately switched the
+   model to a fixed-step `ode4`/`0.001s` solver afterward - also verified
+   fast (15.85s wall-clock for 24.3s of flight), left as-is, no reason to
+   revert.
+17. **InitFcn broke again, second stray-workspace-variable incident, fixed at
+   the root this time, DONE, verified, saved.** After item 16, the user hit
+   a NEW failure: `Update Diagram`/InitFcn threw `Array indices must be
+   positive integers or logical values` from `lqr_gain_design.m` line 17
+   (`Q = diag([20, 20, 20, 0.5, 0.5, 0.5]);`). Root cause confirmed via
+   `exist('diag','var')`/`which diag -all`: a stray variable literally named
+   `diag` was sitting in the base MATLAB workspace, shadowing the builtin
+   `diag()` function - since `matl.m`/`lqr_gain_design.m` run as scripts,
+   they share whatever is in the base workspace, so `diag(...)` tried to
+   *index* that variable instead of calling the function. Same root class
+   of bug as the item (see Repository layout) `lqr_gain_design.m` fix
+   earlier this session (stale `rocket.Ixx`), different stray variable, no
+   known origin (not created by anything in this repo's own scripts).
+   Fixed at the root this time instead of just clearing the one bad
+   variable: added `clearvars` as the first executable line of `matl.m`, so
+   InitFcn always starts from an empty workspace regardless of what junk is
+   left over from prior runs/experiments. Verified the fix actually works,
+   not just that the immediate symptom went away: deliberately poisoned the
+   workspace again (`diag = 'poison'; rocket.Ixx = 999;`) before calling
+   `matl;` and confirmed it still built `rocket` and updated the diagram
+   cleanly. Safe because `matl.m` never depends on any pre-existing
+   workspace variable - it rebuilds `rocket` entirely from scratch every
+   time, and this project's own convention is to avoid flat workspace
+   variables in favor of the `rocket` struct (see Legacy section).
 
 ## Physics / math conventions
 - Full variable-inertia Euler equation: `M = I*omega_dot + I_dot*omega + omega x (I*omega)`.

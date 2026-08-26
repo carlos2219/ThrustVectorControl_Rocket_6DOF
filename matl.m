@@ -3,6 +3,12 @@
 % CG/CP, propellant, thrust curves, servo tuning, LQR gains). Run with
 % MATLAB's cwd set to the project root (see NOTES.md).
 
+% Runs as a script (shares the base workspace), so a stray leftover
+% variable with the same name as a builtin (e.g. `diag`) or an old `rocket`
+% field can silently break this. Clear the slate every time so InitFcn
+% never depends on whatever happens to already be in the workspace.
+clearvars
+
 % Body-from-Earth DCM, ~89.9 deg pitch launch attitude. Not measured, and not
 % wired to the controller (see CLAUDE.md known gap item 2).
 rocket.DCM_ref = [0.001745328365898, 0, -0.999998476913288;
