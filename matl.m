@@ -1,7 +1,7 @@
 % matl.m - builds the `rocket` struct used by rocket_upwork.slx's InitFcn.
 % Single source of truth for every editable plant parameter (mass, geometry,
 % CG/CP, propellant, thrust curves, servo tuning, LQR gains). Run with
-% MATLAB's cwd set to the project root (see NOTES.md).
+% MATLAB's cwd set to the project root (see README.md, Getting started).
 
 % Runs as a script (shares the base workspace), so a stray leftover
 % variable with the same name as a builtin (e.g. `diag`) or an old `rocket`
@@ -10,7 +10,7 @@
 clearvars
 
 % Body-from-Earth DCM, ~89.9 deg pitch launch attitude. Not measured, and not
-% wired to the controller (see ENGINEERING_LOG.md known gap item 2).
+% wired to the controller (see DEVELOPMENT_NOTES.md, Known limitations).
 rocket.DCM_ref = [0.001745328365898, 0, -0.999998476913288;
                   0, 1, 0;
                   0.999998476913288, 0, 0.001745328365898];

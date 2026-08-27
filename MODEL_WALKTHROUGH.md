@@ -5,12 +5,10 @@ learning the model from scratch, in **physical/logical flow order**, not
 implementation chronology. It is meant to be readable on its own, without
 opening Simulink, as a first pass.
 
-This is **not** a replacement for `ENGINEERING_LOG.md`. `ENGINEERING_LOG.md` is the engineering
-log/diary: decisions, incidents, dates, verification numbers, "Known gaps"
-with item numbers. This document explains *what the model does and why*, in
-one linear read. Where something is a placeholder, simplification, or open
-item, this document points at the relevant `ENGINEERING_LOG.md` "Known gaps" item
-number rather than re-explaining it.
+This is **not** a replacement for `DEVELOPMENT_NOTES.md`, which covers
+design decisions and known limitations in more depth. This document
+explains *what the model does and why*, in one linear read; where
+something is a placeholder or simplification, it's called out inline.
 
 ## 1. High-level signal flow
 
@@ -76,14 +74,17 @@ x_cg(t) = x_cg_initial + (x_cg_burnout - x_cg_initial) * frac_burned
 ```
 
 `m_dry = 1.310 kg`, `m_prop = 0.690 kg` (client-measured, all fed in from
-`matl.m`, see Known gaps item 7). `x_cg_initial = 1.090 m`,
-`x_cg_burnout = 1.0373 m` from nose tip (item 5). `mass_burn_duration = 20 s`
-is a single continuous ramp covering ascent + descent together - this chart
-does not know about the separate ascent/descent phase split that
-`Thrust Status` tracks (item 7).
+`matl.m`). `x_cg_initial = 1.090 m`, `x_cg_burnout = 1.0373 m` from nose
+tip (derived assuming propellant burns from the motor pivot, not the true
+propellant centroid - a simplifying assumption, not a measurement).
+`mass_burn_duration = 20 s` is a single continuous ramp covering ascent +
+descent together - this chart intentionally does not know about the
+separate ascent/descent phase split that `Thrust Status` tracks (one
+continuous depletion model, not a bug).
 
 `I(t)` is diagonal only, with **no parallel-axis correction** for the CG
-shift `x_cg(t)` - a deliberate M1 simplification (item 8). `dI/dt` is
+shift `x_cg(t)` - a deliberate M1 simplification (`Iyy`/`Izz` measured via
+bifilar pendulum, `Ixx` still an unmeasured placeholder). `dI/dt` is
 required as an independent input alongside `I` (not derived internally by
 the 6DOF block) because the full variable-inertia Euler equation needs the
 `I_dot*omega` "phantom torque" term explicitly:
@@ -116,8 +117,8 @@ phase 3 (DESCENT)  -- propellant exhausted (t_burn_descent after ignition) --> p
 
 Phase 1→2 is **time-triggered**, but `t_burn_ascent` is not a fixed number -
 it's derived from the real ascent thrust curve's own last timestamp
-(currently ~21.5s, item 11). Phase 2→3 is **altitude/velocity-triggered**,
-against a parameterized `ignition_altitude` (15m, item 12), not
+(currently ~21.5s). Phase 2→3 is **altitude/velocity-triggered**,
+against a parameterized `ignition_altitude` (15m), not
 time-triggered - this matters because `remaining_fuel_time_s` (this chart's
 third output) only counts down meaningfully during phase 3; during phase 1
 it's a constant, not usable for ascent timing.
@@ -141,7 +142,7 @@ else:
 ```
 
 Ascent motors follow the **real static-test thrust curve**
-(`thrust_data_ascent_clean.csv`, kgf→N, used in full - item 12). Descent
+(`thrust_data_ascent_clean.csv`, kgf→N, used in full). Descent
 motors still use the flat `T_nominal=8N` placeholder - current focus is
 ascent only; `thrust_data_descent_clean.csv` exists as a prepared slot for
 real descent data but isn't wired in yet. `thrust_pert` and
@@ -169,8 +170,8 @@ M_total = sum(M_i) + M_aero
 `alpha`/`beta` are the per-motor pitch/yaw gimbal deflections from the
 controller (section 7). At zero deflection, `F_i` reduces to `[T(i);0;0]` -
 thrust purely along **+x_b**, confirmed to be the vehicle's vertical/thrust
-axis (see section 5 for why this matters, and `ENGINEERING_LOG.md` Physics/math
-conventions for the numerical verification).
+axis (see section 5 for why this matters, and `DEVELOPMENT_NOTES.md`'s
+Physics/math conventions for the numerical verification).
 
 `r_cg` comes from `AssembleRCG` (section 2) - the moment arm here **does**
 track the burning CG. Note (audit finding, `matl.m` comments on
@@ -185,8 +186,7 @@ asymmetry, not fixed in this pass.
 Solves a real physics gap the switch to real thrust data exposed: the
 measured thrust curve takes ~1-1.5s to exceed the vehicle's weight after
 ignition. Without this block, the vehicle free-falls through the ground
-during that window before the touchdown detector falsely fires
-(`ENGINEERING_LOG.md` item 13).
+during that window before the touchdown detector falsely fires.
 
 ```
 if h <= 0.001:
@@ -211,7 +211,7 @@ falsely trigger it. `LiftoffArm` is a one-way latch: touchdown detection
 stays disabled until `h` first exceeds 1.0m, then stays permanently enabled
 for the rest of the flight (including a later hover/landing approach).
 Deliberately not a fixed tolerance on `Hit Crossing` itself, since the
-ground-phase dip depth varies with `thrust_pert`/`ignition_delay` (item 13).
+ground-phase dip depth varies with `thrust_pert`/`ignition_delay`.
 
 ## 6. 6DOF integration
 
@@ -239,10 +239,9 @@ same reason.
 internally - it trusts `m`, `dI/dt`, `I` fed in externally each step (from
 `MassInertiaModel`), and requires them to be consistent with each other
 (the `I_dot*omega` term in the Euler equation only cancels correctly if they
-are). This block was migrated this session from a legacy masked block
+are). This block was migrated from a legacy masked block
 (`aerolibobsolete/6DOF (Euler Angles)`) to this clean, current-Aerospace-
-Blockset block - see `ENGINEERING_LOG.md` item 1 for the full port-diff and
-verification writeup.
+Blockset block, verified equivalent before the switch.
 
 ## 7. Controller / actuator (Umut's contribution)
 
@@ -277,32 +276,20 @@ deflection that actually feeds `rocket_forces_moments`.
 
 ## 8. Known simplifications / open items
 
-Pointers only - see `ENGINEERING_LOG.md` "Known gaps" for the full writeup on each:
+Quick reference - see `DEVELOPMENT_NOTES.md`'s "Known limitations" for more
+context on each:
 
-- **Item 2:** three different `DCM_ref` values exist in this codebase, only
-  one (a hardcoded literal in the TVC controller) is actually live.
-- **Item 5:** `x_cg_burnout` is derived (propellant-concentrated-at-pivot
-  assumption), not directly measured.
-- **Item 7:** `MassInertiaModel`'s `mass_burn_duration=20s` is independent
-  from `Thrust Status`'s phase-split timing, by convention only.
-- **Item 8:** `I(t)` has no parallel-axis correction for CG shift. `Ixx`
+- Three different `DCM_ref` values exist in this codebase; only one (a
+  hardcoded literal in the TVC controller) is actually live.
+- `I(t)` has no parallel-axis correction for the CG shift. `Ixx`
   (LQR-facing) is still an unmeasured placeholder; `Iyy`/`Izz` are measured.
-- **Item 11:** ascent burn duration is derived from the real thrust curve's
-  own last timestamp (~21.5s), not a fixed number.
-- **Item 12:** ascent thrust curve is raw scale-reading data, not corrected
-  for motor mass loss during the burn; descent motors still use a flat
-  placeholder, current focus is ascent only.
-- **Item 13:** residual ~-0.043m pad-phase altitude dip is expected, not a
-  bug (only the vertical axis is held by `GroundReaction`).
-- **Item 14:** the model is numerically chaotic near touchdown/hard impact -
-  don't expect exact apogee/touchdown reproducibility between runs that
-  differ only in solver settings or unrelated additions.
-- **Item 17:** `matl.m` runs `clearvars` first - InitFcn shares the base
-  MATLAB workspace, and a stray leftover variable has broken it twice.
-- **Other loose ends** (see `matl.m` comments): `rocket.gimbal_limit_ascent_deg`/
-  `gimbal_limit_hover_deg` are unused, duplicated as hardcoded literals
-  elsewhere; the TVC controller's thrust-allocation `r_cg` is static (t=0),
-  not the dynamic burn-tracking one; several `rocket.*` fields
-  (`engine_pivot_x_from_cg`, `T_total_nominal`, `m_prop_ascent_each`/
-  `descent_each`, `burn_rate_each`) are informational/reference values not
-  wired to any live block.
+- The model is numerically chaotic near touchdown/hard impact - don't
+  expect exact apogee/touchdown reproducibility between runs that differ
+  only in solver settings or unrelated additions.
+- The TVC controller's thrust-allocation `r_cg` is static (frozen at t=0),
+  not the dynamic burn-tracking one used by the plant's force/moment
+  mixing - a real asymmetry, not yet reconciled.
+- A few `rocket.*` fields are unused or informational-only (see
+  `DEVELOPMENT_NOTES.md`): `gimbal_limit_ascent_deg`/`gimbal_limit_hover_deg`,
+  `engine_pivot_x_from_cg`, `T_total_nominal`, `m_prop_ascent_each`/
+  `descent_each`, `burn_rate_each`.
