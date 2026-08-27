@@ -128,6 +128,15 @@ workspace variables.
     function). Fixed at the root: `matl.m` now runs `clearvars` as its
     first line, so InitFcn is self-healing regardless of prior workspace
     state.
+18. **`Simulation Monitoring` subsystem** (root level, client request): a
+    dedicated read-only review panel, separate from the per-block debug
+    scopes scattered throughout the model (those stay in place). Contains
+    one Scope per signal group: Position (`Xe`), Velocity (`Ve`), Attitude
+    (`Euler`), Angular Rates (`Omega_be`), Thrust (per-motor), Forces
+    (`F_total`), Moments (`M_total`). Fed by root-level `From` blocks
+    reading the existing root Goto tags of the same names (one-level hop,
+    per the Goto/From rule below) — no new signal taps were added to the
+    plant, this only reuses what was already broadcast at root scope.
 
 ## Physics / math conventions
 - Full variable-inertia Euler equation:
