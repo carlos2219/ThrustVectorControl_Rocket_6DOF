@@ -14,9 +14,6 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 ## Known limitations
 
-- **Reference attitude (`DCM_ref`)**: three different values exist in the
-  codebase; only the TVC controller's hardcoded one is actually live. Not
-  yet consolidated into one source.
 - **CG at burnout**: `x_cg_burnout` (1.037 m) is derived assuming
   propellant burns from the motor pivot, not the true propellant
   centroid — a simplifying assumption, not a measurement.
@@ -43,11 +40,6 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   folder** at load/update time (see the README's Getting Started). Not
   fixed at the root cause — a future improvement would resolve the path
   relative to the model file itself instead of relying on cwd.
-- **A few `rocket.*` parameters are unused or duplicated**:
-  `gimbal_limit_ascent_deg`/`gimbal_limit_hover_deg` aren't wired to the
-  controller (which hardcodes its own limits); `engine_pivot_x_from_cg`,
-  `T_total_nominal`, `m_prop_ascent_each`/`descent_each`, and
-  `burn_rate_each` are informational only, not read by any live block.
 
 ## Recent additions
 
@@ -55,6 +47,23 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   scope per signal group — Position, Velocity, Attitude, Angular Rates,
   Thrust, Forces, Moments — for reviewing a run without hunting through
   the model. Per-block debug scopes elsewhere are unchanged.
+- **Model restructured into 5 top-level subsystems**: `Rocket` (plant),
+  `Controller` (LQR/DCM TVC + descent throttle), `Animation`,
+  `Simulation Monitoring`, and `Flight Termination`. `Rocket` exposes one
+  clean interface (`alpha_cmd`/`beta_cmd` in; state + force/moment
+  telemetry out), so swapping in a different control architecture or
+  running a plant-only sweep no longer means untangling root-level wiring.
+- **`DCM_ref` and the gimbal limits are now genuinely single-sourced from
+  `matl.m`**: the TVC controller reads `rocket.DCM_ref` and
+  `rocket.gimbal_limit_ascent_deg` (previously hardcoded literals inside
+  the MATLAB Function/Constant blocks); the descent throttle reads
+  `rocket.gimbal_limit_hover_deg(2)`. No plant/controller parameter should
+  be hardcoded inside a block — if you find one, it belongs in `matl.m`.
+- **`matl.m` cleaned up**: reorganized by function (aero/geometry, mass,
+  inertia, motor geometry, attitude reference, thrust/timing, gimbal
+  limits, servo), and dead fields with zero consumers removed
+  (`diameter`, `m_casing_each`, `burn_rate_each`, `T_total_nominal`,
+  `rocket.m`, `rocket.I_burn`, `rocket.lqr.DCM_ref`).
 
 ## Physics / math conventions
 
