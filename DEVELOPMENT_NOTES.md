@@ -64,6 +64,44 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   limits, servo), and dead fields with zero consumers removed
   (`diameter`, `m_casing_each`, `burn_rate_each`, `T_total_nominal`,
   `rocket.m`, `rocket.I_burn`, `rocket.lqr.DCM_ref`).
+- **Artificial test-thrust Manual Switches** in `Rocket/Thrust Subsystem`:
+  "Ascent Thrust Source" and "Descent Thrust Source" toggle each phase
+  between the real motor data and a flat artificial value
+  (`rocket.test_ascent_thrust_N`, `rocket.test_descent_thrust_N`, both in
+  `matl.m`). `CurrentSetting = '1'` selects real motor data, `'0'` selects
+  the flat artificial value. Built for quick what-if checks (e.g. "would a
+  stronger motor reach a reasonable apogee?") without editing the CSVs.
+  **Currently both switches are left at `'0'`** (artificial thrust, set to
+  8 N per motor - close to the real curve's ~9.2 N peak) while this test is
+  ongoing; flip both to `'1'` to go back to the real ascent/descent curves
+  for normal runs.
+- **TVC allocation matrix now uses live per-motor thrust**: `tvc_controller_dcm`
+  took a fixed `nominal_thrust` scalar (`rocket.T_nominal`) to convert
+  commanded moment into gimbal angles — harmless with the real curve
+  (peaks at ~9.2 N, close to the 8 N assumption) but it let the artificial
+  30 N test thrust destabilize the vehicle immediately (the allocation was
+  scaled ~4x off from reality). Fixed by feeding `T_per_engine` (Rocket's
+  live `Thrust` output, routed through a new `Controller` input) into the
+  allocation calc instead. Real-mode flight is very slightly different
+  now (138.8 m apogee vs. 139.1 m before) since the allocation legitimately
+  tracks the real curve instead of a flat assumption — expected, not a bug.
+- **`Altitude Clamp`** (`Saturate`, `[0, inf]`) added ahead of the `ISA
+  Atmosphere Model` and `WGS84 Gravity Model` in the aero subsystem. Found
+  while chasing the extreme sim slowdown during the unstable 30 N crash
+  test below: once the vehicle punches through the ground with a large
+  negative altitude, those Aerospace Blockset models are being fed values
+  outside their valid range, which is the likely cause of the slowdown.
+  Clamping the altitude feed (not the real `h` used for touchdown
+  detection, only this branch) keeps atmosphere/gravity well-behaved
+  regardless of how badly a given run crashes.
+- **Known open item from this pass**: with the artificial 30 N/motor
+  thrust, the vehicle no longer tumbles but still drifts significantly in
+  attitude (Euler swings ~100°+) before crashing at high descent speed —
+  apogee ~344 m at t=7.1s. The LQR gain `K` and allocation were designed
+  around the real ~8-9 N regime; a much stronger motor likely needs its
+  own gain redesign, not just the allocation-scale fix above. Left for a
+  follow-up pass — see also "Descent is a placeholder" above, which still
+  applies (no real hover-control work done this round).
 
 ## Physics / math conventions
 

@@ -99,6 +99,12 @@ rocket.ignition_delay = [0 0 0];
 rocket.gimbal_limit_ascent_deg = [-10, 10];
 rocket.gimbal_limit_hover_deg = [-15, 60];
 
+%% Artificial test thrust (quick sensitivity checks - see Manual Switches
+% in Thrust Subsystem to flip between this and the real motor data).
+rocket.test_ascent_thrust_N = 8;    % flat per-motor thrust, N (real curve peaks at ~9.2 N)
+rocket.test_ascent_curve_N = rocket.test_ascent_thrust_N * ones(size(rocket.ascent_thrust_curve_N));
+rocket.test_descent_thrust_N = 8;   % flat per-motor thrust, N (same as rocket.T_nominal)
+
 %% Controller design (LQR gain, computed offline)
 lqr_gain_design;
 
