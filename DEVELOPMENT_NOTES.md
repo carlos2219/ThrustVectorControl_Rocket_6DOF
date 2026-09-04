@@ -179,6 +179,28 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
     outports, the `Position`/`Velocity` root Goto tags, `Controller`, and
     `Animation` all keep the original NED (Z-down) convention unchanged.
 
+- **`Simulation Monitoring` scope labeling convention, client request**:
+  every vector scope (`Attitude (Euler)`, `Angular Rates`, `Forces`,
+  `Moments`, `Position (Xe)`, `Velocity (Ve)`, `Thrust (per motor)`, the 4
+  gimbal scopes) now feeds through a `Demux` -> `Bus Creator` instead of a
+  plain `Mux`. The scope `Title` stays the default `%<SignalLabel>`
+  template — it's the **signal name on the Bus Creator's output line**
+  that supplies the title text (e.g. named `Attitude`), and the **names
+  on the Bus Creator's input lines** that supply the per-line legend
+  entries (e.g. `Roll`/`Pitch`/`Yaw`) — Simulink reads both from the line
+  `Name` property, not the port. `YLabel` carries the units instead of the
+  title (`degrees`, `m`, `N`, etc.). `Attitude (Euler)` and `Angular
+  Rates` also gained a `180/pi` `Gain` — previously plotted in radians
+  despite looking like degrees, now genuinely degrees. The root-level
+  `Euler`/`Omega_be`/`Xe`/`Ve`/etc. signals themselves are untouched
+  (still radians/NED where applicable) — all of this is scoped to the
+  monitoring plots only. The 6-panel `Scope` block (dashboard duplicating
+  the individual scopes) now sources from the same named bus signals
+  instead of the raw Inports, so its titles/legends stay in sync
+  automatically — but it has no working per-axis `YLabel` (tested: it's a
+  single block-wide string, useless with 6 different units on one block),
+  so that one has no Y-axis units, unlike every dedicated scope.
+
 ## Physics / math conventions
 
 - Full variable-inertia Euler equation:
