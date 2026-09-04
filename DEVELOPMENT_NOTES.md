@@ -64,17 +64,46 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   limits, servo), and dead fields with zero consumers removed
   (`diameter`, `m_casing_each`, `burn_rate_each`, `T_total_nominal`,
   `rocket.m`, `rocket.I_burn`, `rocket.lqr.DCM_ref`).
-- **Artificial test-thrust Manual Switches** in `Rocket/Thrust Subsystem`:
-  "Ascent Thrust Source" and "Descent Thrust Source" toggle each phase
-  between the real motor data and a flat artificial value
-  (`rocket.test_ascent_thrust_N`, `rocket.test_descent_thrust_N`, both in
-  `matl.m`). `CurrentSetting = '1'` selects real motor data, `'0'` selects
-  the flat artificial value. Built for quick what-if checks (e.g. "would a
-  stronger motor reach a reasonable apogee?") without editing the CSVs.
-  **Currently both switches are left at `'0'`** (artificial thrust, set to
-  8 N per motor - close to the real curve's ~9.2 N peak) while this test is
-  ongoing; flip both to `'1'` to go back to the real ascent/descent curves
-  for normal runs.
+- **Artificial test-thrust Manual Switches** in `Rocket/Thrust Subsystem`,
+  now three, not two — **must be flipped together** (see the note block
+  next to them in the model):
+  - "Ascent Thrust Source": real curve (`rocket.ascent_thrust_curve_N`) vs.
+    flat artificial (`rocket.test_ascent_curve_N`).
+  - "Ascent Burn Duration Source" (new): how long phase 1 lasts —
+    `rocket.t_burn_ascent` (real, ~21.5 s, derived from the curve's last
+    timestamp) vs. `rocket.test_ascent_thrust_duration_s` (new field, 10 s,
+    client-specified). Before this switch existed, `t_burn_ascent` fed
+    `Thrust Status` unconditionally, so the artificial-thrust test always
+    ran for ~21.5 s regardless of the other switch — this is what caused
+    the 632 m vs. ~280 m apogee discrepancy the client reported (excess
+    impulse from burning ~11.5 s longer than intended, not a double-count
+    or double-gravity bug). Fixed by adding this switch; real-mode apogee
+    unchanged (138.8 m, verified), artificial-mode apogee dropped from
+    631.6 m to 130.0 m once the duration matches the intended 10 s.
+  - "Descent Thrust Source": real/nominal (`rocket.T_nominal`) vs. flat
+    artificial (`rocket.test_descent_thrust_N`).
+
+  `CurrentSetting = '1'` selects real motor data on all three, `'0'`
+  selects the artificial test values. Built for quick what-if checks (e.g.
+  "would a stronger motor reach a reasonable apogee?") without editing the
+  CSVs. **Currently all three switches are left at `'0'`** (artificial
+  thrust, 8 N per motor, 10 s) while this test is ongoing; flip all three
+  to `'1'` to go back to the real ascent/descent curves for normal runs.
+
+  **Field map** (ascent and descent are intentionally different
+  mechanisms — ascent has a real motor curve, descent doesn't yet, so it
+  runs on a flat scalar):
+
+  | `matl.m` field | Consumer(s) | Role |
+  |---|---|---|
+  | `ascent_thrust_curve_t/N` | `PerMotorThrust` | real ascent curve |
+  | `test_ascent_curve_N` | `PerMotorThrust` | flat artificial ascent |
+  | `t_burn_ascent` | `Thrust Status` | real ascent burn duration |
+  | `test_ascent_thrust_duration_s` | `Thrust Status` | artificial ascent burn duration |
+  | `T_nominal` | `PerMotorThrust` **and** `Controller/Descent Throttle` (Umut's hover-throttle calc) | descent thrust — no real curve yet, and shared with the controller, so don't rename/remove without checking that side |
+  | `test_descent_thrust_N` | `PerMotorThrust` | flat artificial descent, independent of the controller's assumption |
+  | `t_burn_descent` | `Thrust Status` | descent burn duration (already a single independent parameter, unaffected by this pass) |
+  | `descent_thrust_curve_t/N` | none yet | loaded, reserved for a real descent curve (follow-up work) |
 - **TVC allocation matrix now uses live per-motor thrust**: `tvc_controller_dcm`
   took a fixed `nominal_thrust` scalar (`rocket.T_nominal`) to convert
   commanded moment into gimbal angles — harmless with the real curve

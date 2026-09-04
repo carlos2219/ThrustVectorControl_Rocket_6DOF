@@ -70,8 +70,23 @@ rocket.DCM_ref = [0.001745328365898, 0, -0.999998476913288;
                   0, 1, 0;
                   0.999998476913288, 0, 0.001745328365898];
 
-%% Thrust and burn timing
-rocket.T_nominal = 8.0;   % flat thrust placeholder, N (descent motors + TVC allocation scale)
+%% Thrust configuration
+% Ascent and descent use two DIFFERENT mechanisms on purpose: ascent has a
+% real motor test curve (interpolated), descent does not (yet), so it runs
+% on a flat scalar. Each phase has a "real" and a "test" (artificial flat
+% thrust, for quick what-if checks) variant, picked in Rocket/Thrust
+% Subsystem by three Manual Switches that must be flipped together
+% ('1' = real motor data, '0' = artificial test) - see the annotation next
+% to them in the model and DEVELOPMENT_NOTES.md for the full field map.
+%
+%   Ascent Thrust Source     -> ascent_thrust_curve_N   vs test_ascent_curve_N
+%   Ascent Burn Duration Src -> t_burn_ascent            vs test_ascent_thrust_duration_s
+%   Descent Thrust Source    -> T_nominal                vs test_descent_thrust_N
+
+% T_nominal has TWO consumers, not just Thrust Subsystem: it is also read
+% by Controller/Descent Throttle (Umut's hover-throttle equilibrium calc).
+% Do not rename or remove without checking that side too.
+rocket.T_nominal = 8.0;   % flat descent thrust placeholder, N (no real descent curve yet)
 
 % Ascent thrust curve: real static-test data, used in full. t_burn_ascent is
 % derived from its own last timestamp, so it tracks whatever data is in the CSV.
@@ -84,9 +99,9 @@ rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);
 rocket.descent_ignition_altitude_m = 15;    % m
 rocket.t_burn_descent = 10;                 % s, client-confirmed
 
-% Descent thrust curve: loaded but not wired into PerMotorThrust yet - current
-% focus is ascent only. Placeholder slot (duplicate of ascent data) until real
-% descent motor test data is available.
+% Descent thrust curve: loaded but not wired into PerMotorThrust yet - Carlos
+% is wiring this in as a follow-up. Placeholder slot (duplicate of ascent
+% data) until real descent motor test data is available.
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_descent_clean.csv'));
 rocket.descent_thrust_curve_t = curveTbl.time_seconds';
 rocket.descent_thrust_curve_N = curveTbl.scale_reading_kg' * 9.81;
@@ -95,15 +110,16 @@ rocket.descent_thrust_curve_N = curveTbl.scale_reading_kg' * 9.81;
 rocket.thrust_pert = [0 0 0];
 rocket.ignition_delay = [0 0 0];
 
+% Artificial test thrust (quick sensitivity checks - see Manual Switches in
+% Thrust Subsystem to flip between this and the real motor data/duration).
+rocket.test_ascent_thrust_N = 8;              % flat per-motor thrust, N (real curve peaks at ~9.2 N)
+rocket.test_ascent_curve_N = rocket.test_ascent_thrust_N * ones(size(rocket.ascent_thrust_curve_N));
+rocket.test_ascent_thrust_duration_s = 10;    % s, client-specified artificial-test burn duration
+rocket.test_descent_thrust_N = 8;             % flat per-motor thrust, N (same as rocket.T_nominal)
+
 %% Gimbal limits
 rocket.gimbal_limit_ascent_deg = [-10, 10];
 rocket.gimbal_limit_hover_deg = [-15, 60];
-
-%% Artificial test thrust (quick sensitivity checks - see Manual Switches
-% in Thrust Subsystem to flip between this and the real motor data).
-rocket.test_ascent_thrust_N = 8;    % flat per-motor thrust, N (real curve peaks at ~9.2 N)
-rocket.test_ascent_curve_N = rocket.test_ascent_thrust_N * ones(size(rocket.ascent_thrust_curve_N));
-rocket.test_descent_thrust_N = 8;   % flat per-motor thrust, N (same as rocket.T_nominal)
 
 %% Controller design (LQR gain, computed offline)
 lqr_gain_design;
