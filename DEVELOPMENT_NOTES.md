@@ -151,6 +151,33 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   reads unambiguously as one continuous signal (it always was one signal
   end-to-end after the `Thrust` subsystem rework above — this was a
   labeling fix, not a wiring fix).
+- **Per-motor gimbal telemetry + Z-up plots, client request (motor
+  orientation/rate plots, Z sign convention)**:
+  - `Rocket` gained two new outports, `alpha_real`/`beta_real` (ports 9,
+    10) — the achieved per-motor gimbal angles, tapped from the existing
+    `Servo Actuator`/`Servo Actuator1` outputs (post servo dynamics, not
+    the raw TVC-controller command). New root Goto tags `GimbalAlpha`/
+    `GimbalBeta` carry them into `Simulation Monitoring`.
+  - Four new scopes in `Simulation Monitoring`: `Gimbal Angle - Alpha/Beta
+    (deg)` and `Gimbal Rate - Alpha/Beta (deg per s)`. Angles are
+    `alpha_real`/`beta_real` converted rad->deg; rates are a `Discrete
+    Derivative` block on the deg signal (inherits the fixed-step solver
+    rate) — deliberately **not** implemented by exposing the servo's
+    internal rate state (would mean changing the `Servo Actuator`
+    State-Space `C` matrix, i.e. editing Umut's file; the discrete
+    derivative gets the same information without touching it). Expect the
+    derivative to read a few % above the `servo.max_rate_dps` = 90 limit
+    at the sharpest transitions (~98 seen in testing) — that's
+    discretization overshoot from differentiating a fixed-step signal, not
+    an actual rate-limit violation (the real `Rate Limiter` blocks enforce
+    90 deg/s upstream, before the servo dynamics smooth it further).
+  - `Position (Xe)` and `Velocity (Ve)` scopes in `Simulation Monitoring`
+    now flip the sign of their Z component only (`Demux` -> `Gain(-1)` on
+    Z -> `Mux` back to 3-vector) so the plots read positive going up,
+    matching the existing `h` (altitude) convention. This is a **display-
+    only** change scoped to these two scopes — `Rocket`'s own `Xe`/`Ve`
+    outports, the `Position`/`Velocity` root Goto tags, `Controller`, and
+    `Animation` all keep the original NED (Z-down) convention unchanged.
 
 ## Physics / math conventions
 
