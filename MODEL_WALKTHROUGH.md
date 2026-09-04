@@ -32,13 +32,20 @@ something is a placeholder or simplification, it's called out inline.
   └───────────┘
 ```
 
+Thrust generation (`Thrust`, section 3) lives at root level, alongside
+`Rocket`, not inside it — it reads `height`/`Velocity` off the same root
+Goto/From bus every other subsystem reads, and writes its per-motor
+`T_per_engine` output onto the root bus, which `Rocket` takes in as an
+inport straight into the plant's force/moment mixer. `Rocket` itself is a
+pure force/moment integrator with no thrust-generation logic of its own.
+
 One paragraph per stage:
 
-- **Plant (forces/moments):** combines per-motor thrust (gimbal-rotated),
-  aerodynamic force/moment, gravity, and (near the ground) a launch-pad
-  reaction force into one net body-frame force `F_total` and moment
-  `M_total` each timestep. Also computes the vehicle's time-varying mass and
-  inertia as propellant burns.
+- **Plant (forces/moments):** combines per-motor thrust (gimbal-rotated,
+  fed in from the root-level `Thrust` subsystem), aerodynamic force/moment,
+  gravity, and (near the ground) a launch-pad reaction force into one net
+  body-frame force `F_total` and moment `M_total` each timestep. Also
+  computes the vehicle's time-varying mass and inertia as propellant burns.
 - **6DOF integration:** takes `F_total`, `M_total`, and the current
   mass/inertia, integrates the rigid-body equations of motion (quaternion
   attitude representation), and outputs the vehicle's position, velocity,
@@ -102,9 +109,23 @@ r_cg(2,i) = r_arm * cos(azimuth_deg(i))            (static, doesn't change with 
 r_cg(3,i) = r_arm * sin(azimuth_deg(i))
 ```
 
-## 3. Thrust generation
+## 3. Thrust generation (`Thrust`, root level)
 
-### Thrust Status (`Subsystem/Thrust Status`)
+`Thrust` is a root-level subsystem (not inside `Rocket`), taking
+`height`/`Velocity` off the root Goto/From bus and outputting the per-motor
+`T_per_engine` 3-vector and `phase` onto that same bus. Both ascent and
+descent now read directly off their CSVs (`thrust_data_ascent_clean.csv`,
+`thrust_data_descent_clean.csv`) - there is no MATLAB-side `interp1` and no
+artificial/test-thrust Manual Switch layer any more; each CSV has 4
+columns (`time_seconds, thrust_m1_N, thrust_m2_N, thrust_m3_N`) loaded by
+`matl.m` into a `3xN` array per phase (`rocket.ascent_thrust_curve_N`,
+`rocket.descent_thrust_curve_N`). Per-motor columns are currently identical
+(duplicated from the old single-sensor static-test data) until real
+per-motor test data exists - see "Descent is a placeholder" in
+`DEVELOPMENT_NOTES.md`, still true for descent's *data*, even though the
+wiring mechanism is now identical to ascent's.
+
+### Thrust Status
 
 A vehicle-level flight-phase state machine (one CG trajectory, one phase -
 not per-motor):
@@ -120,37 +141,36 @@ it's derived from the real ascent thrust curve's own last timestamp
 (currently ~21.5s). Phase 2→3 is **altitude/velocity-triggered**,
 against a parameterized `ignition_altitude` (15m), not
 time-triggered - this matters because `remaining_fuel_time_s` (this chart's
-third output) only counts down meaningfully during phase 3; during phase 1
-it's a constant, not usable for ascent timing.
+second output) only counts down meaningfully during phase 3; during phase 1
+it's a constant, not usable for ascent timing. It's a MATLAB Function block
+with `persistent` state, which requires an explicit discrete
+`SystemSampleTime` (`0.001`, matching the fixed-step solver) rather than
+`-1` (inherited/continuous).
 
-### PerMotorThrust (`Subsystem/PerMotorThrust`)
+### Per-motor thrust lookup (`AscentLUT_M1..3`, `DescentLUT_M1..3`)
 
-Computes real per-motor thrust, replacing the old flat placeholder:
+Interpolation itself happens in six native `1-D Lookup Table` blocks (3
+motors x 2 phases, `ExtrapMethod=Clip` to replicate the old hold-last-value
+behavior at the ends of each curve), not in a MATLAB Function:
 
 ```
-time_in_phase = t                                    (phase 1, ascent)
-time_in_phase = t_burn_descent - remaining_fuel_time_s (phase 3, descent)
-
-t_local(i) = time_in_phase - ignition_delay(i)
-
-if phase==1 and t_local>=0:
-    T(i) = interp1(ascent_thrust_curve_t, ascent_thrust_curve_N, t_local) * (1 + thrust_pert(i))
-elseif phase==3 and t_local>=0:
-    T(i) = T_nominal * (1 + thrust_pert(i))
-else:
-    T(i) = 0
+AscentLUT_Mi(t)   = interp1(ascent_thrust_curve_t,  ascent_thrust_curve_N(i,:),  t)
+DescentLUT_Mi(t') = interp1(descent_thrust_curve_t, descent_thrust_curve_N(i,:), t')
+    where t' = t_burn_descent - remaining_fuel_time_s   (elapsed time since descent ignition)
 ```
 
-Ascent motors follow the **real static-test thrust curve**
-(`thrust_data_ascent_clean.csv`, kgf→N, used in full). Descent
-motors still use the flat `T_nominal=8N` placeholder - current focus is
-ascent only; `thrust_data_descent_clean.csv` exists as a prepared slot for
-real descent data but isn't wired in yet. `thrust_pert` and
-`ignition_delay` are per-motor sensitivity knobs for a later sensitivity
-study, zero by default.
+The ascent lookups run directly off the free-running `Clock` (raw
+simulation time, since ascent starts at `t=0`); the descent lookups run off
+`t'`, reconstructed from `Thrust Status`'s `remaining_fuel_time_s` output
+the same way the old `PerMotorThrust` MATLAB Function used to. `ThrustSelect`
+(a `MultiPortSwitch`) then picks the active phase's 3-vector using `phase`
+from `Thrust Status` as the control input: `AscentVec` (phase 1),
+`ZeroVec` (phase 2, coast), `DescentVec` (phase 3), `ZeroVec` (phase 4,
+done).
 
-Output is `T`, a `[3x1]` **column** vector, not a row (a row vector causes
-a port-dimension-mismatch compile error against the downstream gain).
+Output is `T_per_engine`, a `[3x1]` **column** vector, not a row (a row
+vector causes a port-dimension-mismatch compile error against downstream
+consumers).
 
 ## 4. Force/moment mixing (`rocket_forces_moments`)
 
@@ -211,7 +231,8 @@ falsely trigger it. `LiftoffArm` is a one-way latch: touchdown detection
 stays disabled until `h` first exceeds 1.0m, then stays permanently enabled
 for the rest of the flight (including a later hover/landing approach).
 Deliberately not a fixed tolerance on `Hit Crossing` itself, since the
-ground-phase dip depth varies with `thrust_pert`/`ignition_delay`.
+ground-phase dip depth is sensitive to attitude/thrust-curve details and
+isn't a fixed number worth hardcoding a tolerance around.
 
 ## 6. 6DOF integration
 
@@ -266,7 +287,12 @@ way - commanding all 3 motors to cant outward together by a collective angle
 `theta_throttle`, so vertical thrust becomes `T_total*cos(theta)` while each
 motor still burns at full thrust. A simple altitude/velocity feedback law
 adjusts this angle around a computed hover-equilibrium value. Only active
-during phase 3 (descent burn).
+during phase 3 (descent burn). Its equilibrium calc used to read the flat
+`rocket.T_nominal` scaled by `n_engines`; it now takes the live
+`T_per_engine` vector (available at `Controller`'s boundary since `Thrust`
+moved to root level) and uses `sum(T_per_engine)` instead - equivalent when
+the vector is flat, but it now legitimately varies over the descent burn
+rather than being a constant assumption.
 
 **Servo actuator dynamics** (`Servo Actuator`, `Servo Actuator1`): native
 Simulink State-Space + Transport Delay blocks per motor, modeling the real
@@ -293,3 +319,11 @@ context on each:
   `DEVELOPMENT_NOTES.md`): `gimbal_limit_ascent_deg`/`gimbal_limit_hover_deg`,
   `engine_pivot_x_from_cg`, `T_total_nominal`, `m_prop_ascent_each`/
   `descent_each`, `burn_rate_each`.
+- `Rocket` still has an internal `Ve`/`Xe` Goto/From pair (from the 6DOF
+  block, into `Forces and Moments`' `GroundReaction`) that looks similar in
+  shape to the Goto/From pair that used to feed the old in-`Rocket` thrust
+  subsystem before `Thrust` moved to root level. Simulink does not error on
+  a mismatched/orphaned Goto/From tag at compile time - it just silently
+  holds the last (zero) value - so deleting the wrong-looking pair during a
+  future cleanup is an easy way to zero out `h` and everything downstream
+  of it without an error to flag it.

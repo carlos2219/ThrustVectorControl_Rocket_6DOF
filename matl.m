@@ -71,51 +71,27 @@ rocket.DCM_ref = [0.001745328365898, 0, -0.999998476913288;
                   0.999998476913288, 0, 0.001745328365898];
 
 %% Thrust configuration
-% Ascent and descent use two DIFFERENT mechanisms on purpose: ascent has a
-% real motor test curve (interpolated), descent does not (yet), so it runs
-% on a flat scalar. Each phase has a "real" and a "test" (artificial flat
-% thrust, for quick what-if checks) variant, picked in Rocket/Thrust
-% Subsystem by three Manual Switches that must be flipped together
-% ('1' = real motor data, '0' = artificial test) - see the annotation next
-% to them in the model and DEVELOPMENT_NOTES.md for the full field map.
-%
-%   Ascent Thrust Source     -> ascent_thrust_curve_N   vs test_ascent_curve_N
-%   Ascent Burn Duration Src -> t_burn_ascent            vs test_ascent_thrust_duration_s
-%   Descent Thrust Source    -> T_nominal                vs test_descent_thrust_N
-
-% T_nominal has TWO consumers, not just Thrust Subsystem: it is also read
-% by Controller/Descent Throttle (Umut's hover-throttle equilibrium calc).
-% Do not rename or remove without checking that side too.
-rocket.T_nominal = 8.0;   % flat descent thrust placeholder, N (no real descent curve yet)
-
-% Ascent thrust curve: real static-test data, used in full. t_burn_ascent is
-% derived from its own last timestamp, so it tracks whatever data is in the CSV.
+% Single source of truth: both ascent and descent thrust come directly from
+% their CSV files, one real per-motor curve each - no artificial/test
+% switches. Each CSV has 4 columns: time_seconds, thrust_m1_N, thrust_m2_N,
+% thrust_m3_N. Interpolation happens in Simulink Lookup Table blocks (root
+% level Thrust subsystem), not in MATLAB - matl.m only loads the raw
+% breakpoints/table data. Per-motor columns are currently identical
+% (duplicated from the single-sensor static-test data) until real
+% per-motor test data is available.
 thrustDataDir = fileparts(mfilename('fullpath'));
+
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_ascent_clean.csv'));
 rocket.ascent_thrust_curve_t = curveTbl.time_seconds';
-rocket.ascent_thrust_curve_N = curveTbl.scale_reading_kg' * 9.81;
-rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);
+rocket.ascent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];
+rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);   % tracks the CSV's last timestamp
 
 rocket.descent_ignition_altitude_m = 15;    % m
 rocket.t_burn_descent = 10;                 % s, client-confirmed
 
-% Descent thrust curve: loaded but not wired into PerMotorThrust yet - Carlos
-% is wiring this in as a follow-up. Placeholder slot (duplicate of ascent
-% data) until real descent motor test data is available.
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_descent_clean.csv'));
 rocket.descent_thrust_curve_t = curveTbl.time_seconds';
-rocket.descent_thrust_curve_N = curveTbl.scale_reading_kg' * 9.81;
-
-% Per-motor sensitivity knobs for PerMotorThrust (for later sweeps), zero by default.
-rocket.thrust_pert = [0 0 0];
-rocket.ignition_delay = [0 0 0];
-
-% Artificial test thrust (quick sensitivity checks - see Manual Switches in
-% Thrust Subsystem to flip between this and the real motor data/duration).
-rocket.test_ascent_thrust_N = 8;              % flat per-motor thrust, N (real curve peaks at ~9.2 N)
-rocket.test_ascent_curve_N = rocket.test_ascent_thrust_N * ones(size(rocket.ascent_thrust_curve_N));
-rocket.test_ascent_thrust_duration_s = 10;    % s, client-specified artificial-test burn duration
-rocket.test_descent_thrust_N = 8;             % flat per-motor thrust, N (same as rocket.T_nominal)
+rocket.descent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];
 
 %% Gimbal limits
 rocket.gimbal_limit_ascent_deg = [-10, 10];

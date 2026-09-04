@@ -33,9 +33,10 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   matrix uses a fixed (t=0) moment arm, while the plant's actual
   force/moment mixing tracks the burning CG dynamically. Real asymmetry,
   not yet reconciled.
-- **Descent is a placeholder**: descent motors run on a flat nominal
-  thrust value; the descent thrust curve CSV is loaded but not wired in.
-  Current focus is ascent only.
+- **Descent is a placeholder**: the descent CSV is wired into `Thrust`
+  the same way as ascent, but its per-motor columns are currently
+  duplicated from the same single-sensor static-test data as ascent, not
+  real descent motor test data. Current focus is ascent only.
 - **`matl.m`'s InitFcn requires the project root as MATLAB's working
   folder** at load/update time (see the README's Getting Started). Not
   fixed at the root cause — a future improvement would resolve the path
@@ -64,73 +65,66 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   limits, servo), and dead fields with zero consumers removed
   (`diameter`, `m_casing_each`, `burn_rate_each`, `T_total_nominal`,
   `rocket.m`, `rocket.I_burn`, `rocket.lqr.DCM_ref`).
-- **Artificial test-thrust Manual Switches** in `Rocket/Thrust Subsystem`,
-  now three, not two — **must be flipped together** (see the note block
-  next to them in the model):
-  - "Ascent Thrust Source": real curve (`rocket.ascent_thrust_curve_N`) vs.
-    flat artificial (`rocket.test_ascent_curve_N`).
-  - "Ascent Burn Duration Source" (new): how long phase 1 lasts —
-    `rocket.t_burn_ascent` (real, ~21.5 s, derived from the curve's last
-    timestamp) vs. `rocket.test_ascent_thrust_duration_s` (new field, 10 s,
-    client-specified). Before this switch existed, `t_burn_ascent` fed
-    `Thrust Status` unconditionally, so the artificial-thrust test always
-    ran for ~21.5 s regardless of the other switch — this is what caused
-    the 632 m vs. ~280 m apogee discrepancy the client reported (excess
-    impulse from burning ~11.5 s longer than intended, not a double-count
-    or double-gravity bug). Fixed by adding this switch; real-mode apogee
-    unchanged (138.8 m, verified), artificial-mode apogee dropped from
-    631.6 m to 130.0 m once the duration matches the intended 10 s.
-  - "Descent Thrust Source": real/nominal (`rocket.T_nominal`) vs. flat
-    artificial (`rocket.test_descent_thrust_N`).
-
-  `CurrentSetting = '1'` selects real motor data on all three, `'0'`
-  selects the artificial test values. Built for quick what-if checks (e.g.
-  "would a stronger motor reach a reasonable apogee?") without editing the
-  CSVs. **Currently all three switches are left at `'0'`** (artificial
-  thrust, 8 N per motor, 10 s) while this test is ongoing; flip all three
-  to `'1'` to go back to the real ascent/descent curves for normal runs.
-
-  **Field map** (ascent and descent are intentionally different
-  mechanisms — ascent has a real motor curve, descent doesn't yet, so it
-  runs on a flat scalar):
-
-  | `matl.m` field | Consumer(s) | Role |
-  |---|---|---|
-  | `ascent_thrust_curve_t/N` | `PerMotorThrust` | real ascent curve |
-  | `test_ascent_curve_N` | `PerMotorThrust` | flat artificial ascent |
-  | `t_burn_ascent` | `Thrust Status` | real ascent burn duration |
-  | `test_ascent_thrust_duration_s` | `Thrust Status` | artificial ascent burn duration |
-  | `T_nominal` | `PerMotorThrust` **and** `Controller/Descent Throttle` (Umut's hover-throttle calc) | descent thrust — no real curve yet, and shared with the controller, so don't rename/remove without checking that side |
-  | `test_descent_thrust_N` | `PerMotorThrust` | flat artificial descent, independent of the controller's assumption |
-  | `t_burn_descent` | `Thrust Status` | descent burn duration (already a single independent parameter, unaffected by this pass) |
-  | `descent_thrust_curve_t/N` | none yet | loaded, reserved for a real descent curve (follow-up work) |
-- **TVC allocation matrix now uses live per-motor thrust**: `tvc_controller_dcm`
-  took a fixed `nominal_thrust` scalar (`rocket.T_nominal`) to convert
-  commanded moment into gimbal angles — harmless with the real curve
-  (peaks at ~9.2 N, close to the 8 N assumption) but it let the artificial
-  30 N test thrust destabilize the vehicle immediately (the allocation was
-  scaled ~4x off from reality). Fixed by feeding `T_per_engine` (Rocket's
-  live `Thrust` output, routed through a new `Controller` input) into the
-  allocation calc instead. Real-mode flight is very slightly different
-  now (138.8 m apogee vs. 139.1 m before) since the allocation legitimately
-  tracks the real curve instead of a flat assumption — expected, not a bug.
-- **`Altitude Clamp`** (`Saturate`, `[0, inf]`) added ahead of the `ISA
-  Atmosphere Model` and `WGS84 Gravity Model` in the aero subsystem. Found
-  while chasing the extreme sim slowdown during the unstable 30 N crash
-  test below: once the vehicle punches through the ground with a large
-  negative altitude, those Aerospace Blockset models are being fed values
+- **Thrust is now a single root-level `Thrust` subsystem, sourced directly
+  from the CSVs — the artificial/real Manual Switches are gone.** Both
+  `thrust_data_ascent_clean.csv` and `thrust_data_descent_clean.csv` now
+  have 4 columns: `time_seconds, thrust_m1_N, thrust_m2_N, thrust_m3_N`
+  (per-motor columns are currently identical, duplicated from the old
+  single-sensor curve, until real per-motor test data exists). `matl.m`
+  loads each into a 3xN array (`rocket.ascent_thrust_curve_N`,
+  `rocket.descent_thrust_curve_N`); the actual interpolation happens in
+  six native `1-D Lookup Table` blocks inside `Thrust` (3 per motor per
+  phase, `ExtrapMethod=Clip` to replicate the old hold-last-value
+  behavior) — no more `interp1` in a MATLAB Function.
+  `T_nominal`, `thrust_pert`, and `ignition_delay` were removed from
+  `matl.m` (no remaining consumers).
+  - `Thrust` moved out of `Rocket` entirely: it takes `height`/`Velocity`
+    feedback from the root Goto/From bus (same signals every other
+    subsystem reads) and outputs the per-motor `T_per_engine` 3-vector and
+    `phase` onto the existing root `Thrust`/`phase` Goto tags. `Rocket`
+    lost its `Thrust`/`faz` outports and gained a `T_per_engine` inport
+    (port 3) feeding straight into `Forces and Moments`; it's now a pure
+    force/moment integrator with no thrust-generation logic of its own.
+  - The phase-detection state machine (ascent burn -> coast -> descent
+    burn) is unchanged logically, just relocated and trimmed (its old
+    unused flat-`T_per_engine` output was dead code — nothing consumed it
+    — so the rebuilt chart only outputs `phase` and
+    `remaining_fuel_time_s`). **It's a MATLAB Function block with
+    `persistent` state, which requires an explicit discrete
+    `SystemSampleTime` (set to `0.001`, matching the fixed-step solver) —
+    Simulink errors at simulation start if this is left at `-1`
+    (inherited/continuous) with persistent variables in play.**
+  - **Controller/Descent Throttle (Umut's, off-limits territory) was
+    touched**: its hover-throttle equilibrium calc (`descent_tilt_lqr`)
+    used to read the flat `rocket.T_nominal` scaled by `n_engines`; it now
+    takes the live `T_per_engine` vector (already available at
+    `Controller`'s boundary) and uses `sum(T_per_engine)` instead. Flag
+    this to Umut — the math is equivalent when the vector is flat, but it
+    now legitimately varies over the descent burn instead of being a
+    constant assumption.
+  - Deleting the two internal Rocket-level Goto/From pairs that fed the
+    old in-`Rocket` `Thrust Subsystem` (`Ve`/`Xe`, tags reused by
+    `From5`/`From6` for `Forces and Moments`' own `Ve`/`Xe` inputs) is an
+    easy way to silently zero out `h` and everything downstream of it —
+    Simulink does not error on the mismatched Goto/From tags at compile
+    time, it just holds the last (zero) value. If `h` ever again reads as
+    suspiciously flat/zero for a whole run, check for exactly this.
+- **`Altitude Clamp`** (`Saturate`, `[0, inf]`) sits ahead of the `ISA
+  Atmosphere Model` and `WGS84 Gravity Model` in the aero subsystem. Added
+  while chasing an extreme sim slowdown during an unstable high-thrust
+  crash test: once the vehicle punches through the ground with a large
+  negative altitude, those Aerospace Blockset models are fed values
   outside their valid range, which is the likely cause of the slowdown.
   Clamping the altitude feed (not the real `h` used for touchdown
   detection, only this branch) keeps atmosphere/gravity well-behaved
   regardless of how badly a given run crashes.
-- **Known open item from this pass**: with the artificial 30 N/motor
-  thrust, the vehicle no longer tumbles but still drifts significantly in
-  attitude (Euler swings ~100°+) before crashing at high descent speed —
-  apogee ~344 m at t=7.1s. The LQR gain `K` and allocation were designed
-  around the real ~8-9 N regime; a much stronger motor likely needs its
-  own gain redesign, not just the allocation-scale fix above. Left for a
-  follow-up pass — see also "Descent is a placeholder" above, which still
-  applies (no real hover-control work done this round).
+- **Known open item, carried forward**: a motor stronger than the current
+  ~8-9 N/motor real curve will likely destabilize the vehicle (drifts
+  ~100°+ in attitude before crashing at high descent speed, observed at
+  30 N/motor in an earlier ad hoc test) — the LQR gain `K` and TVC
+  allocation were designed around the real regime and likely need their
+  own redesign for a materially stronger motor, not just a data swap. Also
+  see "Descent is a placeholder" above, still true.
 
 ## Physics / math conventions
 
