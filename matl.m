@@ -1,10 +1,8 @@
 % matl.m - builds the `rocket` struct used by rocket_upwork.slx's InitFcn.
-% Single source of truth for every editable plant parameter. Run with
-% MATLAB's cwd set to the project root (see README.md, Getting started).
+% Single source of truth for every editable plant parameter. Requires
+% MATLAB's cwd set to the project root (see README.md).
 
-% Runs as a script (shares the base workspace) - clear the slate every
-% time so InitFcn never depends on leftover variables from a prior run.
-clearvars
+clearvars   % script shares the base workspace - avoid inheriting stale vars
 
 %% Aerodynamics (disabled) and geometry reference
 rocket.cg = [1.09, 0, 0];    % static aero CG from nose tip, m
@@ -20,8 +18,7 @@ rocket.m_prop_ascent_each = 0.115;     % propellant per motor, kg (client-measur
 rocket.m_prop_descent_each = 0.115;
 rocket.m_prop_total = rocket.n_engines * (rocket.m_prop_ascent_each + rocket.m_prop_descent_each);
 
-rocket.mass_burn_duration = 20;        % s, one continuous depletion covering ascent + descent
-                                        % (independent from t_burn_ascent/t_burn_descent below)
+rocket.mass_burn_duration = 20;        % s, propellant depletion time (separate from t_burn_ascent/t_burn_descent)
 rocket.m0_computed = rocket.m_dry + rocket.n_engines * ...
     (rocket.m_prop_ascent_each + rocket.m_prop_descent_each);
 
@@ -54,8 +51,8 @@ rocket.side_length = 0.043;                 % equilateral motor mount side, m
 rocket.r_arm = rocket.side_length / sqrt(3);
 rocket.azimuth_deg = [0, 120, 240];
 
-% Static (t=0) per-motor moment arm - feeds only the TVC allocation matrix.
-% The plant tracks the burning CG dynamically instead (AssembleRCG).
+% Static (t=0) moment arm for the TVC allocation matrix only; the plant
+% tracks the burning CG dynamically instead (AssembleRCG).
 rocket.r_cg = zeros(3, rocket.n_engines);
 for i = 1:rocket.n_engines
     azimuth_angle = deg2rad(rocket.azimuth_deg(i));
@@ -71,14 +68,8 @@ rocket.DCM_ref = [0.001745328365898, 0, -0.999998476913288;
                   0.999998476913288, 0, 0.001745328365898];
 
 %% Thrust configuration
-% Single source of truth: both ascent and descent thrust come directly from
-% their CSV files, one real per-motor curve each - no artificial/test
-% switches. Each CSV has 4 columns: time_seconds, thrust_m1_N, thrust_m2_N,
-% thrust_m3_N. Interpolation happens in Simulink Lookup Table blocks (root
-% level Thrust subsystem), not in MATLAB - matl.m only loads the raw
-% breakpoints/table data. Per-motor columns are currently identical
-% (duplicated from the single-sensor static-test data) until real
-% per-motor test data is available.
+% CSV columns: time_seconds, thrust_m1_N, thrust_m2_N, thrust_m3_N.
+% Interpolation happens in Simulink (root Thrust subsystem), not here.
 thrustDataDir = fileparts(mfilename('fullpath'));
 
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_ascent_clean.csv'));
@@ -86,7 +77,7 @@ rocket.ascent_thrust_curve_t = curveTbl.time_seconds';
 rocket.ascent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];
 rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);   % tracks the CSV's last timestamp
 
-rocket.descent_ignition_altitude_m = 15;    % m
+rocket.descent_ignition_altitude_m = 40;    % m
 rocket.t_burn_descent = 10;                 % s, client-confirmed
 
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_descent_clean.csv'));

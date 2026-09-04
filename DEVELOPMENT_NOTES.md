@@ -34,9 +34,21 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   force/moment mixing tracks the burning CG dynamically. Real asymmetry,
   not yet reconciled.
 - **Descent is a placeholder**: the descent CSV is wired into `Thrust`
-  the same way as ascent, but its per-motor columns are currently
-  duplicated from the same single-sensor static-test data as ascent, not
-  real descent motor test data. Current focus is ascent only.
+  the same way as ascent, but it's currently the same idealized flat
+  profile as ascent (see below), not real descent motor test data.
+  Current focus is ascent only.
+- **Large lateral drift, root cause identified, fix not yet applied**:
+  ~290 m lateral drift by touchdown against a ~130-139 m apogee. Pitch
+  stays near-vertical throughout (looks "upright"), but roll/yaw swing
+  through 100°+ excursions — the vehicle spins about its own thrust axis
+  and that's what drags it sideways. Root cause: the LQR weights in
+  `lqr_gain_design.m` (Umut's) are symmetric across all 3 attitude axes
+  (`Q = diag([20,20,20,...])`), but roll has a much shorter moment arm
+  (`r_arm` ≈ 0.025 m vs. `engine_pivot_x_from_cg` ≈ 0.1 m for pitch/yaw)
+  and a much smaller inertia (`Ixx_burn` = 0.018 vs. `Iyy_burn`/`Izz_burn`
+  = 0.338), an asymmetry the current design doesn't account for. Retuning
+  `lqr_gain_design.m` is next, deliberately deferred to a separate pass —
+  do not touch it as a side effect of unrelated work.
 - **`matl.m`'s InitFcn requires the project root as MATLAB's working
   folder** at load/update time (see the README's Getting Started). Not
   fixed at the root cause — a future improvement would resolve the path
@@ -118,13 +130,27 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   Clamping the altitude feed (not the real `h` used for touchdown
   detection, only this branch) keeps atmosphere/gravity well-behaved
   regardless of how badly a given run crashes.
-- **Known open item, carried forward**: a motor stronger than the current
-  ~8-9 N/motor real curve will likely destabilize the vehicle (drifts
-  ~100°+ in attitude before crashing at high descent speed, observed at
-  30 N/motor in an earlier ad hoc test) — the LQR gain `K` and TVC
-  allocation were designed around the real regime and likely need their
-  own redesign for a materially stronger motor, not just a data swap. Also
-  see "Descent is a placeholder" above, still true.
+- **Known open item, carried forward**: a motor stronger than ~8-9 N/motor
+  will likely destabilize the vehicle (drifts ~100°+ in attitude before
+  crashing at high descent speed, observed at 30 N/motor in an earlier ad
+  hoc test) — the LQR gain `K` and TVC allocation were designed around
+  this regime and likely need their own redesign for a materially
+  stronger motor, not just a data swap. Also see "Descent is a
+  placeholder" above, still true.
+- **Thrust CSVs replaced with an idealized flat profile, client request**:
+  `thrust_data_ascent_clean.csv` and `thrust_data_descent_clean.csv` are
+  now just 2 rows each — `[0, 8, 8, 8]` and `[10, 8, 8, 8]` — i.e. a flat
+  8 N/motor for 10 s, 0 N during coast, 8 N/motor for 10 s on descent.
+  Since `t_burn_ascent` derives from the CSV's own last timestamp, this
+  changed it from ~21.5 s to exactly 10 s automatically, no `matl.m` edit
+  needed. The previous real per-motor static-test curves are archived at
+  `thrust_data_archive/*_real_static_test.csv` (not read by anything,
+  reference only). New apogee ~130 m (was ~139 m with the real curve).
+  Also added a legend + clearer title to the `Simulation Monitoring`
+  `Thrust (per motor)` scope, so the combined ascent+coast+descent profile
+  reads unambiguously as one continuous signal (it always was one signal
+  end-to-end after the `Thrust` subsystem rework above — this was a
+  labeling fix, not a wiring fix).
 
 ## Physics / math conventions
 
