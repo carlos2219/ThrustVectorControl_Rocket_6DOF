@@ -77,8 +77,9 @@ rocket.ascent_thrust_curve_t = curveTbl.time_seconds';
 rocket.ascent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];
 rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);   % tracks the CSV's last timestamp
 
-rocket.descent_ignition_altitude_m = 40;    % m
+rocket.descent_ignition_altitude_m = 40;    % m, balances lateral drift vs. touchdown vz (see DEVELOPMENT_NOTES.md)
 rocket.t_burn_descent = 10;                 % s, client-confirmed
+rocket.hover_altitude_m = 1;                % m, descent hover-equilibrium target (client-requested)
 
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_descent_clean.csv'));
 rocket.descent_thrust_curve_t = curveTbl.time_seconds';

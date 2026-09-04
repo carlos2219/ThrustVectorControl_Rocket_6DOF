@@ -37,18 +37,50 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   the same way as ascent, but it's currently the same idealized flat
   profile as ascent (see below), not real descent motor test data.
   Current focus is ascent only.
-- **Large lateral drift, root cause identified, fix not yet applied**:
-  ~290 m lateral drift by touchdown against a ~130-139 m apogee. Pitch
-  stays near-vertical throughout (looks "upright"), but roll/yaw swing
-  through 100°+ excursions — the vehicle spins about its own thrust axis
-  and that's what drags it sideways. Root cause: the LQR weights in
-  `lqr_gain_design.m` (Umut's) are symmetric across all 3 attitude axes
-  (`Q = diag([20,20,20,...])`), but roll has a much shorter moment arm
-  (`r_arm` ≈ 0.025 m vs. `engine_pivot_x_from_cg` ≈ 0.1 m for pitch/yaw)
-  and a much smaller inertia (`Ixx_burn` = 0.018 vs. `Iyy_burn`/`Izz_burn`
-  = 0.338), an asymmetry the current design doesn't account for. Retuning
-  `lqr_gain_design.m` is next, deliberately deferred to a separate pass —
-  do not touch it as a side effect of unrelated work.
+- **Descent guidance law (`descent_tilt_lqr`) isn't scaled for igniting
+  far from the ground — real open item, not yet fixed**: `theta_throttle`
+  saturates at its max (`gimbal_limit_hover_deg(2)` = 60°) for however
+  long `h` stays large after ignition, because `delta_theta =
+  -(K_H*h_err + K_V*v_vertical)` with `K_H=-0.2` blows past `theta_max`
+  almost immediately once `h_err` is more than a few meters — the law was
+  evidently tuned assuming ignition happens within a few tens of meters
+  of the ground, not near apogee. At 60° tilt, `cos(60°)=0.5`, so half
+  the descent thrust is wasted sideways (and actively adds lateral drift)
+  for as long as saturation holds; useful braking only kicks in once `h`
+  drops enough for `delta_theta` to come off the rail. This is *why*
+  igniting earlier (higher up) doesn't keep improving touchdown vertical
+  velocity past a point, and why it makes lateral drift worse the higher
+  it's pushed (swept 15-76 m ignition altitude at the current ~76 m
+  apogee: touchdown lateral drift went from ~5.6 m to ~27 m as vertical
+  velocity improved from ~-36 to ~-16 m/s — a real Pareto tradeoff, not
+  noise). Properly fixing this needs the guidance law itself reworked
+  (e.g. clip/scale the `h_err` term, or gain-schedule `K_H` by altitude),
+  not just a gain or timing tweak — out of scope for this pass since it's
+  a `Controller` change beyond the gains already touched above; flagged
+  for a follow-up.
+- **Lateral drift fixed via LQR retuning, client-approved (touches
+  `lqr_gain_design.m`, Umut's)**: was ~290 m by touchdown against a
+  ~130-139 m apogee (root cause: pitch stayed near-vertical, but roll/yaw
+  swung through 100°+ excursions, spinning the vehicle about its own
+  thrust axis). Fixed empirically by de-weighting roll and raising
+  pitch/yaw (angle AND rate) in `Q`: `diag([8,120,120,0.25,15,15])`,
+  `R=diag([200,30,30])` (was `diag([20,20,20,0.5,0.5,0.5])` /
+  `diag([200,200,200])`). Counterintuitively, *boosting* roll weight
+  first (to compensate its weaker ~4x-shorter moment arm) made drift
+  ~2x worse, not better — roll rotates about the thrust axis and doesn't
+  tilt where thrust points, so fighting it hard just burns gimbal budget
+  out of proportion via the shared saturation clamp in
+  `tvc_controller_dcm`, starving pitch/yaw. Rate weight mattered as much
+  as angle weight: with only angle weighted, pitch rate at ascent
+  burnout was ~32 deg/s, which then free-tumbles the vehicle during the
+  unpowered coast (no thrust = no gimbal authority to damp it) and wrecks
+  attitude before descent-burn ignition even starts; raising rate weight
+  to 15 brought that to ~12 deg/s. Current result: ~6-7 m lateral drift
+  at touchdown (apogee ~76 m), down from ~290 m at the old ~139 m apogee.
+  See `sweep_lqr.m`-style harness pattern in this file's git history if
+  retuning further — hand-editing `lqr_gain_design.m`, resimulating, and
+  reading `logsout`'s `XeRoot` for apogee/lateral drift was the whole
+  method, no closed-form tuning.
 - **`matl.m`'s InitFcn requires the project root as MATLAB's working
   folder** at load/update time (see the README's Getting Started). Not
   fixed at the root cause — a future improvement would resolve the path
@@ -200,6 +232,48 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   automatically — but it has no working per-axis `YLabel` (tested: it's a
   single block-wide string, useless with 6 different units on one block),
   so that one has no Y-axis units, unlike every dedicated scope.
+- **Descent polish pass, client request (lower apogee, earlier descent
+  ignition, hover-before-landing)**:
+  - **Ascent burn shortened 10 s -> 7.6 s** (still flat 8 N/motor,
+    `thrust_data_ascent_clean.csv`) to bring apogee from ~130 m into the
+    client's requested 70-80 m band. Found by direct simulation sweep
+    (`t_burn_ascent` derives from the CSV's last timestamp, so this is
+    just the CSV's second row): apogee ~21 m at 4 s up to ~83 m at 8 s,
+    roughly but not exactly linear; 7.6 s landed at 75.76 m apogee.
+  - **`Controller/Descent Throttle`'s hover equilibrium now targets 1 m
+    above ground, not the ground itself (Umut's file, touched)**: added a
+    `rocket.hover_altitude_m = 1` field and a new chart input
+    (`hover_altitude_m`), and changed `delta_theta`'s height term from
+    raw `h` to `h_err = h - hover_altitude_m`. One-line behavioral change,
+    new Rocket-level `HoverAltitude` Constant block feeds the chart's new
+    8th input port.
+  - **`descent_ignition_altitude_m` stays at 40 m, but is now a deliberate
+    trade-off pick, not the old ~arbitrary value**: swept 15-76 m (see the
+    guidance-law bullet above for why it's a real Pareto tradeoff between
+    lateral drift and touchdown vertical velocity, not just "more time is
+    better"). 40 m gives lateral drift ~6.8 m and touchdown vertical
+    velocity ~-29 m/s — picked as the balanced point since neither metric
+    dominates the other in the client's asks; a different priority
+    (accuracy vs. impact speed) would justify a different pick from the
+    swept table, without needing another sweep:
+    | ignition alt (m) | lateral drift @ touchdown (m) | touchdown vz (m/s) |
+    |---|---|---|
+    | 25 | 5.6 | -35.9 |
+    | 35 | 6.0 | -31.6 |
+    | **40 (current)** | **6.8** | **-29.2** |
+    | 45 | 8.9 | -26.2 |
+    | 50 | 13.8 | -23.7 |
+    | 73 | 27.5 | -15.8 |
+  - **Touchdown vertical velocity did not reach "close to zero" as the
+    client asked, and can't with the current guidance law + ~8 N/motor**:
+    best achieved (~-15.8 m/s at 73 m ignition) is still a hard landing.
+    See the guidance-law-saturation bullet above — this is the same root
+    cause. A real soft landing needs that law fixed (and/or more thrust
+    margin); flagged, not resolved this pass.
+  - None of this touched `t_burn_descent` (still 10 s) — burn duration was
+    never the binding constraint in any of the sweep results above; the
+    vehicle always hits the ground well before the descent motors would
+    run out.
 
 ## Physics / math conventions
 
