@@ -29,6 +29,23 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   tolerance, an unrelated model edit) can produce meter-scale differences
   in apogee/touchdown, while ascent stays stable. When running the
   sensitivity sweep, evaluate metrics during ascent, not touchdown.
+  Re-confirmed after the `eul_0`/`DCM_ref` fix above: swept LQR rate
+  weight (10/12/15/18/20, current=15) and independently swept
+  `descent_ignition_altitude_m` (40/45/50, current=40) with everything
+  else held fixed. Touchdown vz was non-monotonic in both — e.g. rate
+  weight 15 gives -18.5 m/s while its neighbors 12 and 18 give -23.8 and
+  -48.8 m/s, with no trend that survives a step of 2-3 in either
+  direction. Ascent-phase burnout pitch rate (the metric this file's own
+  rule says to trust) is in fact still best at rate weight 15 (~9
+  deg/s vs 13-34 deg/s at the neighboring values tested), so the
+  currently committed gain and ignition altitude were left unchanged —
+  don't re-tune either from touchdown vz alone. This confirms the
+  touchdown-outcome noise floor is real and not fixed by the
+  `eul_0`/`DCM_ref` bug; the actual remaining lever is damping/limiting
+  the coast-phase attitude tumble itself (active, e.g. a coast-phase
+  rate-damping strategy with whatever authority is available, or
+  passive, e.g. the fins the client is considering), not further
+  parameter search on gains or ignition timing.
 - **TVC allocation uses a static CG**: the controller's thrust-allocation
   matrix uses a fixed (t=0) moment arm, while the plant's actual
   force/moment mixing tracks the burning CG dynamically. Real asymmetry,
@@ -88,6 +105,25 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 ## Recent additions
 
+- **Fixed the 6DOF block's initial-attitude/reference mismatch**: the
+  plant's initial pitch (`Rocket/6DOF (Quaternion)` block's `eul_0`) was
+  hardcoded to 85°, independently of `rocket.DCM_ref`'s ~89.9° reference
+  — a ~4.9° built-in attitude error present from t=0 with no physical
+  cause. Root-caused via client-reported "controller keeps correcting
+  with zero disturbance" behavior: reproducing that test (zero initial
+  offset relative to `DCM_ref`, zero moment noise) showed attitude
+  error/rate/gimbal commands all at floating-point noise floor
+  throughout ascent, confirming `tvc_controller_dcm` itself has no bug.
+  Fixed by adding `rocket.launch_pitch_deg` (89.9, kept at this value
+  rather than a clean 90° — unrelated to this fix, see the gimbal-lock
+  note under Physics/math conventions) in `matl.m`, deriving `DCM_ref`
+  from it, and pointing `eul_0` at
+  `[0 deg2rad(rocket.launch_pitch_deg) 0]` instead of a second hardcoded
+  literal. With the mismatch gone (default noise otherwise unchanged):
+  touchdown vz improved from ~-25.4 to ~-18.5 m/s and lateral drift from
+  ~14.8 to ~4.3 m, apogee unaffected (~76-77 m) — this was pure bug, not
+  a removed stress test (nothing in this file or the model described the
+  85°/89.9° gap as an intentional test condition).
 - **`Simulation Monitoring` subsystem** (root level): one place with a
   scope per signal group — Position, Velocity, Attitude, Angular Rates,
   Thrust, Forces, Moments — for reviewing a run without hunting through
@@ -323,17 +359,16 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
     reaction would double-count it); `GroundReaction` and the `h` outport
     correctly use the unclamped altitude (the `Altitude Clamp` only feeds
     atmosphere/gravity models), matching what this file already claimed.
+  - **Fixed (see Recent additions)**: the 6DOF block's initial attitude
+    no longer disagrees with `rocket.DCM_ref` — both now derive from the
+    same `rocket.launch_pitch_deg`.
   - **Known, not fixed, flagged for later (out of scope for "just fix the
-    bugs")**: the 6DOF block's initial attitude, `eul_0 = [0,
-    deg2rad(85), 0]`, is hardcoded in the block mask (not sourced from
-    `matl.m`, violating this project's own convention) and doesn't match
-    `rocket.DCM_ref`'s ~89.9° — the sim starts ~4.9° off the controller's
-    own reference for no physical reason. Also, mass/inertia depletion in
-    `MassInertiaModel` is a function of absolute sim time
-    (`t/rocket.mass_burn_duration`), not of whether the motors are
-    actually firing — during any coast phase (a real feature of the
-    current flight profile) it keeps "burning" propellant on the clock
-    with no thrust. Both pre-date this pass; flagged, not touched.
+    bugs")**: mass/inertia depletion in `MassInertiaModel` is a function
+    of absolute sim time (`t/rocket.mass_burn_duration`), not of whether
+    the motors are actually firing — during any coast phase (a real
+    feature of the current flight profile) it keeps "burning" propellant
+    on the clock with no thrust. Pre-dates this pass; flagged, not
+    touched.
 
 ## Physics / math conventions
 

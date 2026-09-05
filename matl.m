@@ -62,10 +62,15 @@ for i = 1:rocket.n_engines
 end
 
 %% Attitude reference
-% Body-from-Earth DCM, ~89.9 deg pitch launch attitude. Not measured.
-rocket.DCM_ref = [0.001745328365898, 0, -0.999998476913288;
-                  0, 1, 0;
-                  0.999998476913288, 0, 0.001745328365898];
+% Not measured. 89.9 (not exactly 90) so the plant's initial condition
+% (Rocket/6DOF (Quaternion) eul_0, set to deg2rad(rocket.launch_pitch_deg))
+% and the controller's DCM_ref are always derived from this single value
+% instead of drifting apart independently.
+rocket.launch_pitch_deg = 89.9;
+theta_launch = deg2rad(rocket.launch_pitch_deg);
+rocket.DCM_ref = [cos(theta_launch), 0, -sin(theta_launch);
+                  0,                 1,  0;
+                  sin(theta_launch), 0,  cos(theta_launch)];
 
 %% Thrust configuration
 % CSV columns: time_seconds, thrust_m1_N, thrust_m2_N, thrust_m3_N.

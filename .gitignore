@@ -23,3 +23,6 @@ $RECYCLE.BIN/
 # Editor/temp
 *.tmp
 ~$*
+
+# Simulation output plots (regenerated per run)
+plots/
