@@ -101,6 +101,24 @@ rocket.hover_altitude_m = 1;                % m, descent hover-equilibrium targe
 rocket.descent_hover_K_H = -0.2;
 rocket.descent_hover_K_V = -0.31;
 
+% Lateral guidance. Nothing upstream of this closed a loop on horizontal
+% (X/Y) position or velocity - the attitude controller only ever holds a
+% fixed vertical DCM_ref, so any horizontal velocity picked up earlier in
+% flight just carries the vehicle sideways for as long as it's still
+% falling. This biases DCM_ref off-vertical during descent (phase 3
+% only) toward killing X/Y position+velocity error, the same PD structure
+% as descent_hover_K_H/K_V but for the two horizontal axes - see
+% `lateral_guidance_dcm` in Controller. Swept against an 8-seed Monte
+% Carlo (see DEVELOPMENT_NOTES.md): this is a real tradeoff against
+% touchdown vz, not free improvement - these values were picked as the
+% point where worst-case vz is still ~unchanged from no lateral guidance
+% at all, while worst-case drift drops ~44%. Pushing further (higher
+% gains/max_tilt) keeps improving drift but starts costing vz net
+% negative - re-run that sweep before changing these.
+rocket.lateral_guidance_K_pos = 0.015;
+rocket.lateral_guidance_K_vel = 0.05;
+rocket.lateral_guidance_max_tilt_deg = 20;
+
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_descent_clean.csv'));
 rocket.descent_thrust_curve_t = curveTbl.time_seconds';
 rocket.descent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];

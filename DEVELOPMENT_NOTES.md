@@ -8,9 +8,20 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 - **Carlos**: master Simulink file, full implementation/integration,
   Simscape/HIL, STM32 firmware, PCB, CAD.
-- **Umut**: mathematical modeling, controller architecture (LQR/DCM TVC,
-  servo actuator dynamics). The controller subsystems are off-limits for
-  others until the plant is considered done.
+- **Umut**: original mathematical modeling and controller architecture
+  (LQR/DCM TVC, servo actuator dynamics).
+- **[Changed on the `controller-detumble-experiment` branch]** The
+  plant is now considered done (client-validated ascent/coast/descent
+  behavior, see Recent additions), so `Controller` is no longer
+  off-limits - Carlos has since designed and added the LQR
+  design-inertia fix, the rate-weight retune, and the new lateral
+  guidance block directly inside `Controller` (see Recent additions).
+  Coordinate with Umut before further changes to the pieces he
+  originally authored (`tvc_controller_dcm`, `descent_tilt_lqr`'s core
+  structure, servo dynamics) - they weren't rewritten, only fed
+  differently (new inputs, a new upstream block) - but new work
+  alongside/on top of them, like the lateral guidance addition, is fair
+  game for either of you now.
 
 ## Known limitations
 
@@ -45,10 +56,14 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   m/s). So this noise floor is real and not something any single fix
   removes - but it turned out NOT to be the dominant cause of poor
   touchdown vz, which was actually a coast-phase-tumble/fuel-timing
-  problem, both since fixed (see Recent additions - touchdown vz is now
-  ~-2 m/s, not -18 to -25). Keep sweeping in odd, not tight, steps near
-  any newly-tuned value, and don't trust a single "best" sample without
-  checking its immediate neighbors.
+  problem, both since fixed (see Recent additions). Keep sweeping in odd,
+  not tight, steps near any newly-tuned value, and don't trust a single
+  "best" sample without checking its immediate neighbors - and see the
+  next bullet: neighbors in *parameter* space aren't the only kind that
+  matter, neighbors in *noise-seed* space do too. The ~-2 m/s figure this
+  bullet used to cite (from the single seed the model ships with) was
+  itself a case of this - see the Monte Carlo bullet in Recent additions
+  for the real (seed-averaged) numbers.
 - **TVC allocation uses a static CG**: the controller's thrust-allocation
   matrix uses a fixed (t=0) moment arm, while the plant's actual
   force/moment mixing tracks the burning CG dynamically. Real asymmetry,
@@ -108,6 +123,67 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 ## Recent additions
 
+- **[Branch `controller-detumble-experiment`] Discovered the single-seed
+  touchdown numbers reported earlier in this file were not representative
+  - re-evaluated everything with an 8-seed Monte Carlo instead**: varying
+  only `Rocket/Band-Limited White Noise`'s `seed` (nothing else) on the
+  then-committed config (`descent_ignition_altitude_m`=76,
+  `descent_hover_K_V`=-0.31) gave touchdown vz anywhere from -2.2 to
+  -14.7 m/s and lateral drift anywhere from 4 to 51 m depending on seed
+  alone - the single seed used for every earlier sweep in this file
+  happened to be a near-best-case draw, not a typical one. Re-swept
+  `descent_ignition_altitude_m` (40/55/76) against the full seed set:
+  confirmed a real, seed-independent Pareto tradeoff, not sweep noise -
+  40 m gives vz mean/worst -22.1/-31.7 m/s but drift mean/worst
+  6.4/9.9 m; 76 m gives vz mean/worst -7.4/-14.7 m/s but drift mean/worst
+  33.7/51.1 m; 55 m (an in-between guess) is worse than *both* extremes
+  on vz (-28.2/-41.8), confirming this isn't a smooth interpolation
+  either. Root cause: nothing upstream closed a loop on horizontal
+  position/velocity (see the lateral-guidance bullet below), so any
+  ignition-altitude choice is really just choosing how long the vehicle
+  is exposed to that uncontrolled sideways drift, which trades directly
+  against how much altitude margin is available to kill vertical speed.
+  **Going forward, every touchdown-affecting change in this project
+  should be evaluated across multiple noise seeds (a "run once" or
+  "compare 2 single-seed runs" result is not trustworthy near
+  touchdown), not the single committed seed the model happens to ship
+  with.**
+- **[Branch `controller-detumble-experiment`] Added lateral guidance (new
+  `Controller/Lateral Guidance` MATLAB Function block,
+  `lateral_guidance_dcm`) to finally close the horizontal position/
+  velocity loop the Pareto tradeoff above was caused by**: during descent
+  only (phase 3), biases `DCM_ref` off-vertical by a small angle
+  computed from a PD law on X/Y position and velocity error (same
+  structure as `descent_hover_K_H`/`K_V`, but for the two horizontal axes
+  instead of the vertical one), clamped to
+  `rocket.lateral_guidance_max_tilt_deg`. Required: a new `Xe` inport on
+  `Controller` (wired from the existing root-level `Position` Goto/From
+  tag), and replacing `TVC DCM Controller`'s previously-hardcoded
+  `Constant1` (`rocket.DCM_ref`) with a new `DCM_reference_in` port fed
+  by this block's output - `tvc_controller_dcm` itself (Umut's function)
+  was NOT touched, only what feeds its `DCM_reference` input changed.
+  Swept `K_pos`/`K_vel`/`max_tilt_deg` across the same 8-seed Monte Carlo
+  (at `descent_ignition_altitude_m`=76, `descent_hover_K_V`=-0.31):
+  | version | K_pos | K_vel | max_tilt | vz mean/worst (m/s) | drift mean/worst (m) |
+  |---|---|---|---|---|---|
+  | none (baseline) | - | - | - | -7.4 / -14.7 | 33.7 / 51.1 |
+  | v1 | 0.005 | 0.02 | 8° | -8.0 / -13.1 | 23.6 / 41.0 |
+  | v2 | 0.01 | 0.04 | 15° | -9.3 / -13.9 | 16.8 / 33.6 |
+  | v3 | 0.008 | 0.03 | 10° | -8.5 / -13.2 | 21.2 / 38.6 |
+  | **v4 (committed)** | **0.015** | **0.05** | **20°** | **-9.8 / -14.9** | **13.9 / 28.7** |
+  | v5 | 0.02 | 0.06 | 25° | -10.7 / -16.8 | 11.4 / 24.4 |
+  Real, physically-expected tradeoff, not noise: tilting to correct
+  lateral error steals from the vertical thrust component and from the
+  same gimbal-saturation budget `tvc_controller_dcm` shares across all
+  axes, so drift and vz can't both be driven to zero independently.
+  v5 crosses into net-worse-than-baseline vz (worst case -16.8 vs
+  baseline's -14.7); v4 keeps worst-case vz essentially at baseline
+  (-14.9 vs -14.7) while cutting worst-case drift by ~44% (28.7 vs
+  51.1 m) - picked as the current committed point, but this is a
+  judgment call on where to sit on the tradeoff curve, not a uniquely
+  correct answer. Gains are not otherwise validated (no attempt yet to
+  check sensitivity to descent_ignition_altitude_m or descent_hover_K_V
+  changing after this).
 - **[Branch `controller-detumble-experiment`] Traced the descent burn's
   fuel/altitude budget with per-sample telemetry (`h`, `Ve`,
   `theta_throttle`, `faz` tapped inside `Descent Throttle`) and found the
