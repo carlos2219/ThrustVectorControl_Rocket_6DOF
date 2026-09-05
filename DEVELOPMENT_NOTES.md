@@ -8,9 +8,20 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 - **Carlos**: master Simulink file, full implementation/integration,
   Simscape/HIL, STM32 firmware, PCB, CAD.
-- **Umut**: mathematical modeling, controller architecture (LQR/DCM TVC,
-  servo actuator dynamics). The controller subsystems are off-limits for
-  others until the plant is considered done.
+- **Umut**: original mathematical modeling and controller architecture
+  (LQR/DCM TVC, servo actuator dynamics).
+- **[Changed on the `controller-detumble-experiment` branch]** The
+  plant is now considered done (client-validated ascent/coast/descent
+  behavior, see Recent additions), so `Controller` is no longer
+  off-limits - Carlos has since designed and added the LQR
+  design-inertia fix, the rate-weight retune, and the new lateral
+  guidance block directly inside `Controller` (see Recent additions).
+  Coordinate with Umut before further changes to the pieces he
+  originally authored (`tvc_controller_dcm`, `descent_tilt_lqr`'s core
+  structure, servo dynamics) - they weren't rewritten, only fed
+  differently (new inputs, a new upstream block) - but new work
+  alongside/on top of them, like the lateral guidance addition, is fair
+  game for either of you now.
 
 ## Known limitations
 
@@ -18,34 +29,41 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   propellant burns from the motor pivot, not the true propellant
   centroid — a simplifying assumption, not a measurement.
 - **Inertia model**: `I(t)` is diagonal-only, with no parallel-axis
-  correction for the CG shift. `Iyy`/`Izz` are measured (bifilar
-  pendulum); `Ixx` is still an unmeasured placeholder. Client-confirmed
-  acceptable for Milestone 1, but any controllability conclusion from the
-  LQR design is only as good as this placeholder.
+  correction for the CG shift. Client-confirmed acceptable for Milestone
+  1. `rocket.I_dry`/`I_prop` (in `matl.m`) are the only inertia numbers
+  left in the project as of the `controller-detumble-experiment` branch
+  (see Recent additions - the separate bifilar-pendulum-measured
+  `Ixx_burn`/`Iyy_burn`/`Izz_burn` was removed, since it was ~5.6-8x off
+  from these and never actually fed the plant). Their own measurement
+  provenance isn't documented in `matl.m` - confirm with whoever supplied
+  them before treating `I_dry`/`I_prop` as more trustworthy than the
+  bifilar number was.
 - **Aerodynamic drag**: not modeled (`F_aero = 0`). Client-agreed as
   negligible at the current flight envelope; revisit if speeds/altitudes
   increase.
 - **Chaotic near touchdown**: tiny numerical differences (solver
   tolerance, an unrelated model edit) can produce meter-scale differences
-  in apogee/touchdown, while ascent stays stable. When running the
-  sensitivity sweep, evaluate metrics during ascent, not touchdown.
-  Re-confirmed after the `eul_0`/`DCM_ref` fix above: swept LQR rate
-  weight (10/12/15/18/20, current=15) and independently swept
-  `descent_ignition_altitude_m` (40/45/50, current=40) with everything
-  else held fixed. Touchdown vz was non-monotonic in both — e.g. rate
-  weight 15 gives -18.5 m/s while its neighbors 12 and 18 give -23.8 and
-  -48.8 m/s, with no trend that survives a step of 2-3 in either
-  direction. Ascent-phase burnout pitch rate (the metric this file's own
-  rule says to trust) is in fact still best at rate weight 15 (~9
-  deg/s vs 13-34 deg/s at the neighboring values tested), so the
-  currently committed gain and ignition altitude were left unchanged —
-  don't re-tune either from touchdown vz alone. This confirms the
-  touchdown-outcome noise floor is real and not fixed by the
-  `eul_0`/`DCM_ref` bug; the actual remaining lever is damping/limiting
-  the coast-phase attitude tumble itself (active, e.g. a coast-phase
-  rate-damping strategy with whatever authority is available, or
-  passive, e.g. the fins the client is considering), not further
-  parameter search on gains or ignition timing.
+  in apogee/touchdown, while ascent stays stable. When running a
+  sensitivity sweep, evaluate metrics during ascent, not touchdown, and
+  expect any parameter swept near a touchdown-affecting value to show
+  non-monotonic neighbors rather than a smooth trend.
+  Re-confirmed at every stage of the `controller-detumble-experiment`
+  branch's work (see Recent additions): before the LQR design-inertia
+  fix, rate weight 12/15/18 gave touchdown vz -23.8/-18.5/-48.8 m/s; after
+  that fix, rate weight 25-40 has one clean point (30) surrounded by
+  roll-axis blowups at 27/29/35; the hover-throttle gain `K_V` shows the
+  same pattern right at its own optimum (0.30/0.31/0.315 → -3.4/-2.0/-4.1
+  m/s). So this noise floor is real and not something any single fix
+  removes - but it turned out NOT to be the dominant cause of poor
+  touchdown vz, which was actually a coast-phase-tumble/fuel-timing
+  problem, both since fixed (see Recent additions). Keep sweeping in odd,
+  not tight, steps near any newly-tuned value, and don't trust a single
+  "best" sample without checking its immediate neighbors - and see the
+  next bullet: neighbors in *parameter* space aren't the only kind that
+  matter, neighbors in *noise-seed* space do too. The ~-2 m/s figure this
+  bullet used to cite (from the single seed the model ships with) was
+  itself a case of this - see the Monte Carlo bullet in Recent additions
+  for the real (seed-averaged) numbers.
 - **TVC allocation uses a static CG**: the controller's thrust-allocation
   matrix uses a fixed (t=0) moment arm, while the plant's actual
   force/moment mixing tracks the burning CG dynamically. Real asymmetry,
@@ -105,6 +123,197 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 ## Recent additions
 
+- **[Branch `controller-detumble-experiment`] Discovered the single-seed
+  touchdown numbers reported earlier in this file were not representative
+  - re-evaluated everything with an 8-seed Monte Carlo instead**: varying
+  only `Rocket/Band-Limited White Noise`'s `seed` (nothing else) on the
+  then-committed config (`descent_ignition_altitude_m`=76,
+  `descent_hover_K_V`=-0.31) gave touchdown vz anywhere from -2.2 to
+  -14.7 m/s and lateral drift anywhere from 4 to 51 m depending on seed
+  alone - the single seed used for every earlier sweep in this file
+  happened to be a near-best-case draw, not a typical one. Re-swept
+  `descent_ignition_altitude_m` (40/55/76) against the full seed set:
+  confirmed a real, seed-independent Pareto tradeoff, not sweep noise -
+  40 m gives vz mean/worst -22.1/-31.7 m/s but drift mean/worst
+  6.4/9.9 m; 76 m gives vz mean/worst -7.4/-14.7 m/s but drift mean/worst
+  33.7/51.1 m; 55 m (an in-between guess) is worse than *both* extremes
+  on vz (-28.2/-41.8), confirming this isn't a smooth interpolation
+  either. Root cause: nothing upstream closed a loop on horizontal
+  position/velocity (see the lateral-guidance bullet below), so any
+  ignition-altitude choice is really just choosing how long the vehicle
+  is exposed to that uncontrolled sideways drift, which trades directly
+  against how much altitude margin is available to kill vertical speed.
+  **Going forward, every touchdown-affecting change in this project
+  should be evaluated across multiple noise seeds (a "run once" or
+  "compare 2 single-seed runs" result is not trustworthy near
+  touchdown), not the single committed seed the model happens to ship
+  with.**
+- **[Branch `controller-detumble-experiment`] Added lateral guidance (new
+  `Controller/Lateral Guidance` MATLAB Function block,
+  `lateral_guidance_dcm`) to finally close the horizontal position/
+  velocity loop the Pareto tradeoff above was caused by**: during descent
+  only (phase 3), biases `DCM_ref` off-vertical by a small angle
+  computed from a PD law on X/Y position and velocity error (same
+  structure as `descent_hover_K_H`/`K_V`, but for the two horizontal axes
+  instead of the vertical one), clamped to
+  `rocket.lateral_guidance_max_tilt_deg`. Required: a new `Xe` inport on
+  `Controller` (wired from the existing root-level `Position` Goto/From
+  tag), and replacing `TVC DCM Controller`'s previously-hardcoded
+  `Constant1` (`rocket.DCM_ref`) with a new `DCM_reference_in` port fed
+  by this block's output - `tvc_controller_dcm` itself (Umut's function)
+  was NOT touched, only what feeds its `DCM_reference` input changed.
+  Swept `K_pos`/`K_vel`/`max_tilt_deg` across the same 8-seed Monte Carlo
+  (at `descent_ignition_altitude_m`=76, `descent_hover_K_V`=-0.31):
+  | version | K_pos | K_vel | max_tilt | vz mean/worst (m/s) | drift mean/worst (m) |
+  |---|---|---|---|---|---|
+  | none (baseline) | - | - | - | -7.4 / -14.7 | 33.7 / 51.1 |
+  | v1 | 0.005 | 0.02 | 8° | -8.0 / -13.1 | 23.6 / 41.0 |
+  | v2 | 0.01 | 0.04 | 15° | -9.3 / -13.9 | 16.8 / 33.6 |
+  | v3 | 0.008 | 0.03 | 10° | -8.5 / -13.2 | 21.2 / 38.6 |
+  | **v4 (committed)** | **0.015** | **0.05** | **20°** | **-9.8 / -14.9** | **13.9 / 28.7** |
+  | v5 | 0.02 | 0.06 | 25° | -10.7 / -16.8 | 11.4 / 24.4 |
+  Real, physically-expected tradeoff, not noise: tilting to correct
+  lateral error steals from the vertical thrust component and from the
+  same gimbal-saturation budget `tvc_controller_dcm` shares across all
+  axes, so drift and vz can't both be driven to zero independently.
+  v5 crosses into net-worse-than-baseline vz (worst case -16.8 vs
+  baseline's -14.7); v4 keeps worst-case vz essentially at baseline
+  (-14.9 vs -14.7) while cutting worst-case drift by ~44% (28.7 vs
+  51.1 m) - picked as the current committed point, but this is a
+  judgment call on where to sit on the tradeoff curve, not a uniquely
+  correct answer. Gains are not otherwise validated (no attempt yet to
+  check sensitivity to descent_ignition_altitude_m or descent_hover_K_V
+  changing after this).
+- **[Branch `controller-detumble-experiment`] Traced the descent burn's
+  fuel/altitude budget with per-sample telemetry (`h`, `Ve`,
+  `theta_throttle`, `faz` tapped inside `Descent Throttle`) and found the
+  hover-throttle law (`descent_tilt_lqr`) already converges to
+  near-hover velocity - the touchdown number was mostly a fuel-timing
+  problem, not a control-quality problem: at the 76 m ignition altitude,
+  the descent burn's fixed 10 s duration ran out ~0.5 s before the
+  vehicle actually reached the ground, so the reported touchdown vz
+  included a final stretch of unpowered freefall on top of whatever
+  velocity the hover law had actually reached at cutoff.
+  `K_H`/`K_V` (the height-error/vertical-velocity gains) were hardcoded
+  inside the `descent_tilt_lqr` MATLAB Function block, not sourced from
+  `matl.m` - fixed: added `rocket.descent_hover_K_H`/`descent_hover_K_V`,
+  two new Constant blocks in `Descent Throttle`, and two new input ports
+  on the function (`K_H`, `K_V`), following the same pattern as the
+  existing `theta_max_deg`/`hover_altitude_m` inputs.
+  Swept `K_V` from -0.20 to -0.55 (angle-error gain `K_H` left at -0.2,
+  unchanged): touchdown vz is a sharp, non-monotonic function of `K_V`
+  near the optimum (0.28 → -5.2 m/s, 0.30 → -3.4, 0.31 → **-2.0** (best),
+  0.315 → -4.1, 0.32 → -4.2, 0.38 (old default) → -5.8, 0.55 → -9.3) -
+  the same touchdown-proximity chaos this file already documents,
+  showing up on a different axis now that ignition timing and ascent
+  attitude are both fixed. Moved the committed value from -0.38 to
+  -0.31 (best point found, with reasonable-looking neighbors on both
+  sides rather than sitting on a knife's edge).
+  **Net result, focusing on vz only per client instruction (drift checked
+  afterward, see below)**: touchdown vz went from -18.7 m/s
+  (pre-ignition-alt fix) to **-2.0 m/s** - close to what a real soft
+  landing needs. Re-checked lateral drift with this `K_V` afterward
+  (it changes how long the vehicle sits at high collective cant, so it
+  was a real open question): drift came out at **4.0 m**, same ballpark
+  as the 40 m-ignition/old-`K_V` baseline's 4.5 m - no regression, so
+  this is the current best combined result (both metrics improved or
+  held, nothing traded away).
+- **[Branch `controller-detumble-experiment`] Diagnosed the remaining
+  touchdown-quality gap by isolating coast-phase tumble from the descent
+  burn itself**: with the inertia fix and rate-weight retune below,
+  ignition-time pitch/yaw attitude error is small (~4-6°) but touchdown
+  vz (-18.7 m/s) barely improved - suspicious, since a much cleaner start
+  should help more than that. Tested by pushing
+  `descent_ignition_altitude_m` from 40 up toward apogee (~79 m) to
+  shrink the coast window to near-zero and isolate whether the descent
+  burn itself, given a clean start, actually converges:
+  | ignition alt (m) | coast time | pitch/yaw err at ignition | touchdown vz | drift |
+  |---|---|---|---|---|
+  | 40 (old default) | ~2.8 s | ~6° / ~4° | -18.7 m/s | 4.5 m |
+  | 60 | shorter | ~13° / ~1° | -19.7 m/s | 19.4 m |
+  | 75 | ~0.1 s | ~3° / ~6° | -5.4 m/s | 12.4 m |
+  | **76 (new default)** | **~0.1 s** | **~2° / ~5°** | **-5.8 m/s** | **5.1 m** |
+  | 77 | ~0.1 s | ~1° / ~4° | -6.3 m/s | 18.0 m |
+  | 78 | ~0 s | ~0° / ~2° | -6.8 m/s | 36.4 m |
+  Touchdown vz improves ~3x and *stays* improved across the whole 75-78 m
+  band (not a lucky single point - the descent burn itself is fine once
+  it gets a clean start), confirming coast-phase tumble, not the descent
+  burn's own control law, was the dominant cost. Lateral drift, however,
+  does NOT track ignition altitude cleanly (60 m is worse than 40 m; 78 m
+  is much worse than 76/77 m) - because **nothing in this architecture
+  closes a loop on lateral position or velocity**: `tvc_controller_dcm`
+  holds a fixed vertical `DCM_ref` and `descent_tilt_lqr` only manages
+  vertical velocity/altitude via collective cant, so any horizontal
+  velocity picked up earlier in flight just keeps carrying the vehicle
+  sideways for however long it's still falling - a longer coast (higher
+  ignition altitude means more total flight time before touchdown) means
+  more time for that pre-existing drift to accumulate, independent of
+  how well attitude itself is controlled. Also note at the new 76 m
+  default: descent burn is 10.55 s of the available 10.0 s at touchdown -
+  the vehicle is in a final ~0.5 s of unpowered freefall before it
+  lands, which is part of why vz isn't even closer to zero.
+  Moved `descent_ignition_altitude_m` from 40 to 76 m (best combined
+  point found). Real remaining gap for a genuinely soft, on-target
+  landing: an explicit lateral guidance term (bias `DCM_ref` off-vertical
+  toward killing horizontal position/velocity error, the way
+  `descent_tilt_lqr` already does for the vertical axis) - not attempted
+  on this pass.
+- **[Branch `controller-detumble-experiment`] Fixed a ~5.6-8x LQR design/
+  plant inertia mismatch, which was the real cause of the "chaotic near
+  touchdown" sensitivity**: `lqr_gain_design.m`'s `B` matrix used
+  `rocket.Ixx_burn`/`Iyy_burn`/`Izz_burn` (0.018/0.338/0.338 - a
+  bifilar-pendulum measurement), while the actual simulated body
+  (`MassInertiaModel`, via `rocket.I_dry`+`rocket.I_prop`) has
+  Ixx≈0.0022, Iyy=Izz≈0.06 - both measurements existed already, never
+  reconciled with each other, and only the bifilar one fed the
+  controller design. K was designed for a body with ~5.6-8x more
+  rotational inertia than the one actually simulated. Found while
+  investigating a client-suggested "detumble the last moment before
+  burnout" idea (see below): instrumenting pitch rate near ascent
+  burnout showed a growing oscillation (±40-48 deg/s) even with
+  `K_detumble` set identical to the normal `K` (i.e. with the switch
+  mechanism itself proven to be a no-op) - meaning the oscillation
+  pre-existed in the committed model, and the "good" ~9 deg/s burnout
+  rate the earlier LQR retune reported was a lucky snapshot of that
+  oscillation's phase at the exact burnout instant, not a settled value.
+  `eig(A-B*K)` with the old inertia was always a complex-conjugate pair
+  (underdamped by design, before even reaching the plant mismatch); with
+  the corrected inertia it's now all real for the committed Q. Fixed by
+  removing `Ixx_burn`/`Iyy_burn`/`Izz_burn` from `matl.m` entirely and
+  computing the LQR design inertia directly in `lqr_gain_design.m` as
+  `I_dry + I_prop*(1 - t_burn_ascent/mass_burn_duration)` - the same
+  formula `MassInertiaModel` itself uses, so it can't drift out of sync
+  again. Re-swept the rate weight after the fix (10/15/20/25-40) and
+  moved the committed value from 15 to 20 - see the comment above `Q =`
+  in `lqr_gain_design.m` for the sweep results, including a real
+  remaining chaotic band at rate weight 25-40 (a shared gimbal-saturation
+  clamp coupling roll into the pitch/yaw rate weight, unrelated to the
+  inertia bug - not attempted to fix on this pass).
+  Net effect at rate weight 20: touchdown vz -18.7 m/s and drift 4.5 m
+  (both about the same as pre-fix), but ignition-time pitch/yaw attitude
+  error dropped from ~24/11 deg to ~6/4 deg (roll error, which is
+  irrelevant to landing, absorbs the rest) - a real, validated
+  improvement in the dimension that actually matters, even though the
+  touchdown-proximity numerical chaos this file already documents
+  prevented it from also improving the raw touchdown numbers this pass.
+- **Tried and abandoned: a "detumble" LQR gain scheduled into the last
+  ~1s of the (fixed-duration, solid-motor) ascent burn**, switching to a
+  heavier rate-weighted `K_detumble` via a `Clock`+comparator+`Switch`
+  inside `TVC DCM Controller` (no interface/port changes). This was the
+  originally-proposed answer to "can we do SpaceX-style continuous
+  correction on descent" - answer: no, the motors are solid and can't be
+  throttled/restarted, so there's no thrust available during the coast
+  gap to correct anything continuously; the closest physically-viable
+  version is using the *existing* end-of-ascent-burn thrust to null
+  residual rate before the unpowered coast begins. The mechanism itself
+  worked correctly (verified the activation window and gain switch both
+  fire exactly as designed) but made results worse before the inertia
+  fix above (feeding an already-oscillating loop a higher gain made the
+  oscillation worse) and added no measurable benefit after the inertia
+  fix (burnout rate was already small and settled without it). Removed
+  from the model and `lqr_gain_design.m` rather than left in
+  disabled - reintroduce only if a future retune reopens a real
+  end-of-burn residual-rate problem that the inertia fix doesn't cover.
 - **Fixed the 6DOF block's initial-attitude/reference mismatch**: the
   plant's initial pitch (`Rocket/6DOF (Quaternion)` block's `eul_0`) was
   hardcoded to 85°, independently of `rocket.DCM_ref`'s ~89.9° reference
@@ -319,6 +528,20 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
     never the binding constraint in any of the sweep results above; the
     vehicle always hits the ground well before the descent motors would
     run out.
+  - **[Superseded, see the top of Recent additions]**: this bullet and
+    the ignition-altitude table predate the
+    `controller-detumble-experiment` branch. `descent_ignition_altitude_m`
+    is now 76 m (not 40), `K_V` is now -0.31 (not the old hardcoded
+    -0.38), and touchdown vz is now ~-2 m/s - the "can't reach close to
+    zero with the current guidance law" conclusion below did not hold up.
+    The guidance-law-saturation bullet above (theta pinned at 60° early
+    in a near-apogee descent) is NOT contradicted by this - it's the same
+    mechanism, just now deliberately used (igniting at 76 m re-triggers
+    that saturation on purpose, since it turned out to matter less than
+    the coast-phase tumble and fuel-timing issues the new branch actually
+    fixed). `t_burn_descent`'s "never the binding constraint" claim two
+    paragraphs up IS now false, though: at 76 m ignition the descent burn
+    runs out ~0.5 s before actual touchdown.
 - **Plant audit (client-requested, before any controller architecture
   work) found and fixed 2 real physics bugs — not a controller problem**:
   - **Gravity used a static initial mass, not the live depleting one.**

@@ -38,10 +38,15 @@ rocket.Iyy_prop = 0.01;
 rocket.Izz_prop = 0.01;
 rocket.I_prop = diag([rocket.Ixx_prop, rocket.Iyy_prop, rocket.Izz_prop]);
 
-% Burn/LQR-facing inertia. Iyy/Izz measured (bifilar pendulum); Ixx still a placeholder.
-rocket.Ixx_burn = 0.018;
-rocket.Iyy_burn = 0.338;
-rocket.Izz_burn = 0.338;
+% NOTE: there used to be a separate rocket.Ixx_burn/Iyy_burn/Izz_burn here
+% (0.018/0.338/0.338 - a bifilar-pendulum measurement), fed only into
+% lqr_gain_design.m's B matrix and never reconciled with I_dry/I_prop
+% above (0.06 vs 0.338 for pitch/yaw - ~5.6x off). That mismatch meant K
+% was designed for a body ~5.6-8x "heavier" (rotationally) than the one
+% actually simulated, which explains the growing pitch/yaw rate
+% oscillation seen in the last ~1s of the ascent burn. Removed - the LQR
+% design inertia is now derived directly from I_dry/I_prop in
+% lqr_gain_design.m, so it can't drift out of sync with the plant again.
 
 %% Motor mount geometry and per-motor moment arm
 rocket.engine_pivot_from_nose = 1.190;      % measured, m
@@ -82,9 +87,37 @@ rocket.ascent_thrust_curve_t = curveTbl.time_seconds';
 rocket.ascent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];
 rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);   % tracks the CSV's last timestamp
 
-rocket.descent_ignition_altitude_m = 40;    % m, balances lateral drift vs. touchdown vz (see DEVELOPMENT_NOTES.md)
+rocket.descent_ignition_altitude_m = 76;    % m, near apogee - minimizes unpowered-coast tumble before ignition (see DEVELOPMENT_NOTES.md)
 rocket.t_burn_descent = 10;                 % s, client-confirmed
 rocket.hover_altitude_m = 1;                % m, descent hover-equilibrium target (client-requested)
+
+% Hover-throttle feedback gains (descent_tilt_lqr) - used to be hardcoded
+% inside the MATLAB Function block, violating this project's own
+% single-source-of-truth convention. K_V swept 0.20-0.55 (see
+% DEVELOPMENT_NOTES.md): touchdown vz is a sharp, non-monotonic function
+% of K_V near this value (a real minimum, not a smooth one - the
+% touchdown-proximity chaos already documented elsewhere applies here
+% too), so don't nudge this without re-sweeping and checking neighbors.
+rocket.descent_hover_K_H = -0.2;
+rocket.descent_hover_K_V = -0.31;
+
+% Lateral guidance. Nothing upstream of this closed a loop on horizontal
+% (X/Y) position or velocity - the attitude controller only ever holds a
+% fixed vertical DCM_ref, so any horizontal velocity picked up earlier in
+% flight just carries the vehicle sideways for as long as it's still
+% falling. This biases DCM_ref off-vertical during descent (phase 3
+% only) toward killing X/Y position+velocity error, the same PD structure
+% as descent_hover_K_H/K_V but for the two horizontal axes - see
+% `lateral_guidance_dcm` in Controller. Swept against an 8-seed Monte
+% Carlo (see DEVELOPMENT_NOTES.md): this is a real tradeoff against
+% touchdown vz, not free improvement - these values were picked as the
+% point where worst-case vz is still ~unchanged from no lateral guidance
+% at all, while worst-case drift drops ~44%. Pushing further (higher
+% gains/max_tilt) keeps improving drift but starts costing vz net
+% negative - re-run that sweep before changing these.
+rocket.lateral_guidance_K_pos = 0.015;
+rocket.lateral_guidance_K_vel = 0.05;
+rocket.lateral_guidance_max_tilt_deg = 20;
 
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_descent_clean.csv'));
 rocket.descent_thrust_curve_t = curveTbl.time_seconds';
