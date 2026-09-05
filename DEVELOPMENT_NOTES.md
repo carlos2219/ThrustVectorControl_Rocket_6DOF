@@ -234,12 +234,16 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   so that one has no Y-axis units, unlike every dedicated scope.
 - **Descent polish pass, client request (lower apogee, earlier descent
   ignition, hover-before-landing)**:
-  - **Ascent burn shortened 10 s -> 7.6 s** (still flat 8 N/motor,
-    `thrust_data_ascent_clean.csv`) to bring apogee from ~130 m into the
-    client's requested 70-80 m band. Found by direct simulation sweep
-    (`t_burn_ascent` derives from the CSV's last timestamp, so this is
-    just the CSV's second row): apogee ~21 m at 4 s up to ~83 m at 8 s,
-    roughly but not exactly linear; 7.6 s landed at 75.76 m apogee.
+  - **Ascent burn shortened 10 s -> 7.6 s, then -> 6.7 s after the mass-bug
+    fixes below** (still flat 8 N/motor, `thrust_data_ascent_clean.csv`) to
+    bring apogee from ~130 m into the client's requested 70-80 m band.
+    Found by direct simulation sweep (`t_burn_ascent` derives from the
+    CSV's last timestamp, so this is just the CSV's second row): with the
+    live-mass fix, apogee runs from ~40 m at 5 s up to ~84 m at 7 s,
+    roughly but not exactly linear (lighter true mass late in the burn
+    means more delta-v than the old buggy-gravity model assumed for the
+    same burn time, hence a shorter burn now hits the same apogee target —
+    see "Plant audit" below). 6.7 s currently lands at 76.15 m apogee.
   - **`Controller/Descent Throttle`'s hover equilibrium now targets 1 m
     above ground, not the ground itself (Umut's file, touched)**: added a
     `rocket.hover_altitude_m = 1` field and a new chart input
@@ -247,33 +251,89 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
     raw `h` to `h_err = h - hover_altitude_m`. One-line behavioral change,
     new Rocket-level `HoverAltitude` Constant block feeds the chart's new
     8th input port.
-  - **`descent_ignition_altitude_m` stays at 40 m, but is now a deliberate
-    trade-off pick, not the old ~arbitrary value**: swept 15-76 m (see the
+  - **`descent_ignition_altitude_m` stays at 40 m, re-swept after the
+    mass-bug fixes — still a deliberate trade-off pick, not an arbitrary
+    value**: re-swept 20-75 m with live mass in place (see the
     guidance-law bullet above for why it's a real Pareto tradeoff between
     lateral drift and touchdown vertical velocity, not just "more time is
-    better"). 40 m gives lateral drift ~6.8 m and touchdown vertical
-    velocity ~-29 m/s — picked as the balanced point since neither metric
-    dominates the other in the client's asks; a different priority
-    (accuracy vs. impact speed) would justify a different pick from the
-    swept table, without needing another sweep:
+    better"; the live-mass fix genuinely improved the *best available*
+    touchdown vz — see "Plant audit" below). 40 m gives lateral drift
+    ~14.8 m and touchdown vertical velocity ~-25.4 m/s — kept as the
+    balanced point since neither metric dominates the client's asks; a
+    different priority (accuracy vs. impact speed) would justify a
+    different pick from this table, without needing another sweep:
     | ignition alt (m) | lateral drift @ touchdown (m) | touchdown vz (m/s) |
     |---|---|---|
-    | 25 | 5.6 | -35.9 |
-    | 35 | 6.0 | -31.6 |
-    | **40 (current)** | **6.8** | **-29.2** |
-    | 45 | 8.9 | -26.2 |
-    | 50 | 13.8 | -23.7 |
-    | 73 | 27.5 | -15.8 |
+    | 20 | 6.6 | -36.9 |
+    | 30 | 9.3 | -32.1 |
+    | **40 (current)** | **14.8** | **-25.4** |
+    | 50 | 25.7 | -18.3 |
+    | 60 | 30.2 | -9.0 |
+    | 65 | 34.1 | **-6.4** |
+    | 75 | 65.2 | -14.8 |
   - **Touchdown vertical velocity did not reach "close to zero" as the
     client asked, and can't with the current guidance law + ~8 N/motor**:
-    best achieved (~-15.8 m/s at 73 m ignition) is still a hard landing.
-    See the guidance-law-saturation bullet above — this is the same root
-    cause. A real soft landing needs that law fixed (and/or more thrust
-    margin); flagged, not resolved this pass.
+    best achieved (~-6.4 m/s at 65 m ignition, up from ~-15.8 m/s
+    pre-mass-fix) is better but still a hard-ish landing, and only at the
+    cost of ~34 m lateral drift. See the guidance-law-saturation bullet
+    above — this is the same root cause. A real soft landing needs that
+    law fixed (and/or more thrust margin); flagged, not resolved this
+    pass.
   - None of this touched `t_burn_descent` (still 10 s) — burn duration was
     never the binding constraint in any of the sweep results above; the
     vehicle always hits the ground well before the descent motors would
     run out.
+- **Plant audit (client-requested, before any controller architecture
+  work) found and fixed 2 real physics bugs — not a controller problem**:
+  - **Gravity used a static initial mass, not the live depleting one.**
+    `Forces and Moments/Subsystem2/Subsystem1`'s gravity `Product` block
+    multiplied `g_ned` by `Constant4 = rocket.m0_computed` (2.0 kg, fixed)
+    instead of `MassInertiaModel`'s live `m` output — so weight force
+    stayed at the full initial mass for the *entire* flight even as
+    thrust/inertia correctly used the depleting mass elsewhere. By
+    touchdown the true mass is ~1.5-1.55 kg (~65% burned on the current
+    profile), a ~25-30% weight overestimate. Fixed by adding a `Mass`
+    input port through `Subsystem2` -> `Subsystem1` (new port on each),
+    wired from the `m` signal that was already computed and exposed at
+    `Forces and Moments`'s own boundary but not connected further (it fed
+    only its own dangling `m` outport). `Constant4` removed.
+  - **Same bug, `Controller/Descent Throttle`'s hover-equilibrium calc**:
+    `Constant6` fed `descent_tilt_lqr`'s `m_total` with
+    `rocket.m0_computed` too, so `theta_hover = acos(m*g/T_max)` always
+    assumed full initial mass, never the lighter actual descent-time
+    mass. Fixed the same way: new `mass_live` outport on `Rocket` (port
+    11), new root Goto tag `Mass`, new `Mass` inport on `Controller` (port
+    7) and `MassLive` inport on `Descent Throttle` (port 5), replacing
+    `Constant6`.
+  - **Net effect of both fixes**: apogee for the same ascent burn duration
+    increased (lighter real mass late in the burn = more net acceleration
+    than the buggy model assumed), so the ascent burn needed re-shortening
+    (7.6 s -> 6.7 s) to stay in the 70-80 m target band. The *correct*
+    hover-equilibrium math also made touchdown vertical velocity
+    genuinely improvable at higher ignition altitudes (best case improved
+    from ~-15.8 to ~-6.4 m/s), confirming this was a real physics error
+    with real consequences, not a cosmetic one.
+  - **Also audited and confirmed correct, not bugs**: the TVC allocation
+    matrix in `tvc_controller_dcm` is exactly the small-angle linearization
+    of the actual nonlinear thrust-vector model in `rocket_forces_moments`
+    (checked term-by-term); `AssembleRCG`'s dynamic CG tracking already
+    used live `x_cg` correctly (the mass-bug pattern above did *not*
+    recur there); the 6DOF block's `vre_flag=off` is correct (thrust is
+    modeled as an explicit applied force, so mass-flow relative-velocity
+    reaction would double-count it); `GroundReaction` and the `h` outport
+    correctly use the unclamped altitude (the `Altitude Clamp` only feeds
+    atmosphere/gravity models), matching what this file already claimed.
+  - **Known, not fixed, flagged for later (out of scope for "just fix the
+    bugs")**: the 6DOF block's initial attitude, `eul_0 = [0,
+    deg2rad(85), 0]`, is hardcoded in the block mask (not sourced from
+    `matl.m`, violating this project's own convention) and doesn't match
+    `rocket.DCM_ref`'s ~89.9° — the sim starts ~4.9° off the controller's
+    own reference for no physical reason. Also, mass/inertia depletion in
+    `MassInertiaModel` is a function of absolute sim time
+    (`t/rocket.mass_burn_duration`), not of whether the motors are
+    actually firing — during any coast phase (a real feature of the
+    current flight profile) it keeps "burning" propellant on the clock
+    with no thrust. Both pre-date this pass; flagged, not touched.
 
 ## Physics / math conventions
 
