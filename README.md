@@ -2,15 +2,12 @@
 
 ![MATLAB](https://img.shields.io/badge/MATLAB-Simulink-orange)
 ![Status](https://img.shields.io/badge/status-active%20development-blue)
-![Focus](https://img.shields.io/badge/focus-ascent-lightgrey)
 
 A 6DOF flight simulator for a three-motor thrust-vector-controlled (TVC)
-rocket, built in MATLAB/Simulink. LQR/DCM attitude control, live mass/
-inertia tracking, and closed-loop guidance from liftoff through landing.
-
-Freelance build for client Kruthick Jothimani — milestone-based,
-open-source-intent, "keep it simple" design. Physical rocket parameters
-are not final; the real hardware is still under construction.
+rocket, built in MATLAB/Simulink. Simulates the full flight — ascent
+burn, unpowered coast, a real-time "suicide burn" descent ignition, and
+a closed-loop soft landing — with LQR/DCM attitude control, live mass/
+inertia tracking, and lateral guidance to control touchdown drift.
 
 ## How it works
 
@@ -61,6 +58,7 @@ back. Full block-by-block detail lives in `MODEL_WALKTHROUGH.md`.
 
 ## Status
 
-Milestone 1, ascent-focused. Descent thrust is still a flat placeholder
-pending real motor test data. See `DEVELOPMENT_NOTES.md`'s "Known
-limitations" for the full list of open items.
+The full flight loop (ascent → coast → descent → landing) is simulated
+and tuned end-to-end. Descent motor thrust is still a flat placeholder
+(same profile as ascent) pending real motor test data. See
+`DEVELOPMENT_NOTES.md` for the full list of known limitations.

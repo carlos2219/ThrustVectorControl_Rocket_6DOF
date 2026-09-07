@@ -21,7 +21,7 @@ flowchart TB
         PHASE --> LUT
     end
 
-    subgraph CONTROLLER["Controller (Umut's design)"]
+    subgraph CONTROLLER["Controller"]
         direction TB
         LG["Lateral Guidance<br/>(lateral_guidance_dcm)<br/>descent-only, biases DCM_reference<br/>on X/Y position + velocity error"]
         DT["Descent Throttle<br/>(descent_tilt_lqr)<br/>descent-only, collective<br/>gimbal 'throttle' angle"]
@@ -110,7 +110,7 @@ dIxx/dt(t) = -Ixx_prop / t_burn        while burning, else 0   (analytic derivat
 x_cg(t) = x_cg_initial + (x_cg_burnout - x_cg_initial) * frac_burned
 ```
 
-`m_dry = 1.310 kg`, `m_prop = 0.690 kg` (client-measured, all fed in from
+`m_dry = 1.310 kg`, `m_prop = 0.690 kg` (measured, all fed in from
 `matl.m`). `x_cg_initial = 1.090 m`, `x_cg_burnout = 1.0373 m` from nose
 tip (derived assuming propellant burns from the motor pivot, not the true
 propellant centroid - a simplifying assumption, not a measurement).
@@ -169,8 +169,8 @@ phase 3 (DESCENT)  -- propellant exhausted (t_burn_descent after ignition) --> p
 Phase 1→2 is **time-triggered**, but `t_burn_ascent` is not a fixed number -
 it's derived from the real ascent thrust curve's own last timestamp
 (currently ~21.5s). Phase 2→3 is a real-time **"suicide burn" trigger**
-(client-proposed, see `DEVELOPMENT_NOTES.md`), not a fixed altitude:
-ignition fires the instant `h` drops to the distance needed to brake the
+(see `DEVELOPMENT_NOTES.md`), not a fixed altitude: ignition fires the
+instant `h` drops to the distance needed to brake the
 current fall speed to zero using full descent thrust
 (`vertical_velocity^2 / (2*a_brake)`), plus `ignition_margin_m` of safety
 cushion - this adapts to whatever velocity disturbances actually produced
@@ -300,10 +300,7 @@ are). This block was migrated from a legacy masked block
 (`aerolibobsolete/6DOF (Euler Angles)`) to this clean, current-Aerospace-
 Blockset block, verified equivalent before the switch.
 
-## 7. Controller / actuator (Umut's contribution)
-
-High-level only - this is Umut's design; the goal here is to understand the
-*interface*, not audit code someone else is responsible for.
+## 7. Controller / actuator
 
 **Attitude controller** (`TVC DCM Controller/MATLAB Function1`,
 `tvc_controller_dcm`): reads the vehicle's current attitude (`DCMbe`) and
@@ -326,8 +323,8 @@ chemical output, this function throttles *net vertical thrust* a different
 way - commanding all 3 motors to cant outward together by a collective angle
 `theta_throttle`, so vertical thrust becomes `T_total*cos(theta)` while each
 motor still burns at full thrust. Only active during phase 3 (descent burn).
-Two-stage law (client-proposed, see `DEVELOPMENT_NOTES.md`'s "Suicide-burn
-descent ignition" for the full story): commands full thrust
+Two-stage law (see `DEVELOPMENT_NOTES.md`'s "Suicide-burn descent
+ignition" for the full story): commands full thrust
 (`theta_throttle=0`, no tilt) until a one-way latch trips on
 `h <= hover_altitude_m` **or** `vertical_velocity >= 0`, then permanently
 switches to a fine velocity-feedback law targeting
@@ -368,10 +365,8 @@ context on each:
   other `rocket.*` fields, not any Simulink block directly): `m_prop_total`
   from `m_prop_ascent_each`/`descent_each`; `r_cg` from
   `engine_pivot_x_from_cg`. `gimbal_limit_ascent_deg`/`gimbal_limit_hover_deg`
-  are genuinely live (single-sourced into `TVC DCM Controller`/`Descent
-  Throttle`, see `DEVELOPMENT_NOTES.md`), not unused — corrected here, this
-  bullet used to claim otherwise. `T_total_nominal`/`burn_rate_each` no
-  longer exist (removed as dead fields, see `DEVELOPMENT_NOTES.md`).
+  are genuinely live, single-sourced into `TVC DCM Controller`/`Descent
+  Throttle` (see `DEVELOPMENT_NOTES.md`).
 - `Rocket` still has an internal `Ve`/`Xe` Goto/From pair (from the 6DOF
   block, into `Forces and Moments`' `GroundReaction`) that looks similar in
   shape to the Goto/From pair that used to feed the old in-`Rocket` thrust

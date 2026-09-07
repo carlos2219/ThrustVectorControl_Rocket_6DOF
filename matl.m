@@ -14,7 +14,7 @@ rocket.h_ref = 0;            % sea-level reference altitude for the atmosphere m
 rocket.m_dry = 1.310;                  % dry mass, kg (measured, includes 3 empty motor casings)
 rocket.n_engines = 3;
 
-rocket.m_prop_ascent_each = 0.115;     % propellant per motor, kg (client-measured)
+rocket.m_prop_ascent_each = 0.115;     % propellant per motor, kg (measured)
 rocket.m_prop_descent_each = 0.115;
 rocket.m_prop_total = rocket.n_engines * (rocket.m_prop_ascent_each + rocket.m_prop_descent_each);
 
@@ -90,11 +90,11 @@ rocket.ascent_thrust_curve_t = curveTbl.time_seconds';
 rocket.ascent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];
 rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);   % tracks the CSV's last timestamp
 
-rocket.t_burn_descent = 10;                 % s, client-confirmed
+rocket.t_burn_descent = 10;                 % s, descent motor burn duration
 rocket.hover_altitude_m = 1;                % m, below this the fine velocity-feedback throttle takes over
 
 % Descent-motor ignition is no longer a fixed altitude - it's a real-time
-% "suicide burn" trigger (client-proposed): ignite the instant the
+% "suicide burn" trigger: ignite the instant the
 % remaining altitude equals the distance needed to brake the current fall
 % speed to a stop using full (untilted) descent thrust, plus a safety
 % margin. This is computed in `Thrust Status` (needs live mass + gravity +
