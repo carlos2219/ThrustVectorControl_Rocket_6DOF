@@ -160,20 +160,26 @@ not per-motor):
 
 ```
 phase 1 (ASCENT)  -- t < t_burn_ascent --> phase 2 (COAST)
-phase 2 (COAST)    -- descending & h<=ignition_altitude --> phase 3 (DESCENT BURN)
+phase 2 (COAST)    -- descending & h<=suicide-burn stopping distance --> phase 3 (DESCENT BURN)
 phase 3 (DESCENT)  -- propellant exhausted (t_burn_descent after ignition) --> phase 4 (DONE)
 ```
 
 Phase 1→2 is **time-triggered**, but `t_burn_ascent` is not a fixed number -
 it's derived from the real ascent thrust curve's own last timestamp
-(currently ~21.5s). Phase 2→3 is **altitude/velocity-triggered**,
-against a parameterized `ignition_altitude` (15m), not
-time-triggered - this matters because `remaining_fuel_time_s` (this chart's
-second output) only counts down meaningfully during phase 3; during phase 1
-it's a constant, not usable for ascent timing. It's a MATLAB Function block
-with `persistent` state, which requires an explicit discrete
-`SystemSampleTime` (`0.001`, matching the fixed-step solver) rather than
-`-1` (inherited/continuous).
+(currently ~21.5s). Phase 2→3 is a real-time **"suicide burn" trigger**
+(client-proposed, see `DEVELOPMENT_NOTES.md`), not a fixed altitude:
+ignition fires the instant `h` drops to the distance needed to brake the
+current fall speed to zero using full descent thrust
+(`vertical_velocity^2 / (2*a_brake)`), plus `ignition_margin_m` of safety
+cushion - this adapts to whatever velocity disturbances actually produced
+at a given altitude, instead of assuming a nominal trajectory. Needs
+`mass_live`, `g`, and the nominal descent thrust total as extra inputs
+(hence `Thrust` gained a `Mass` inport). `remaining_fuel_time_s` (this
+chart's second output) only counts down meaningfully during phase 3;
+during phase 1 it's a constant, not usable for ascent timing. It's a
+MATLAB Function block with `persistent` state, which requires an explicit
+discrete `SystemSampleTime` (`0.001`, matching the fixed-step solver)
+rather than `-1` (inherited/continuous).
 
 ### Per-motor thrust lookup (`AscentLUT_M1..3`, `DescentLUT_M1..3`)
 
@@ -312,19 +318,24 @@ thrust between the axial and lateral components (see
 `DEVELOPMENT_NOTES.md`'s TVC mixer fix). During descent, a separate
 collective "throttle angle" (below) is added on top as a feedforward term.
 
-**Descent hover throttle** (`Descent Throttle/MATLAB Function2`,
+**Descent throttle** (`Descent Throttle/MATLAB Function2`,
 `descent_tilt_lqr`): since the solid motors can't be throttled by reducing
 chemical output, this function throttles *net vertical thrust* a different
 way - commanding all 3 motors to cant outward together by a collective angle
 `theta_throttle`, so vertical thrust becomes `T_total*cos(theta)` while each
-motor still burns at full thrust. A simple altitude/velocity feedback law
-adjusts this angle around a computed hover-equilibrium value. Only active
-during phase 3 (descent burn). Its equilibrium calc used to read the flat
-`rocket.T_nominal` scaled by `n_engines`; it now takes the live
-`T_per_engine` vector (available at `Controller`'s boundary since `Thrust`
-moved to root level) and uses `sum(T_per_engine)` instead - equivalent when
-the vector is flat, but it now legitimately varies over the descent burn
-rather than being a constant assumption.
+motor still burns at full thrust. Only active during phase 3 (descent burn).
+Two-stage law (client-proposed, see `DEVELOPMENT_NOTES.md`'s "Suicide-burn
+descent ignition" for the full story): commands full thrust
+(`theta_throttle=0`, no tilt) until a one-way latch trips on
+`h <= hover_altitude_m` **or** `vertical_velocity >= 0`, then permanently
+switches to a fine velocity-feedback law targeting
+`v_target = -h / (remaining_fuel_time_s - reserve_time)` for the rest of
+touchdown. The latch (not a plain instantaneous check) matters - full
+thrust decelerates the vehicle back through `v=0`, which would otherwise
+immediately flip the condition back and forth fast enough to destabilize
+attitude. `T_total` is the live `T_per_engine` vector's sum (available at
+`Controller`'s boundary since `Thrust` moved to root level), not an
+assumed nominal value.
 
 **Servo actuator dynamics** (`Servo Actuator`, `Servo Actuator1`): native
 Simulink State-Space + Transport Delay blocks per motor, modeling the real

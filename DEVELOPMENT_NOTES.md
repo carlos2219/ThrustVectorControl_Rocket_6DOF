@@ -72,27 +72,15 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   the same way as ascent, but it's currently the same idealized flat
   profile as ascent (see below), not real descent motor test data.
   Current focus is ascent only.
-- **Descent guidance law (`descent_tilt_lqr`) isn't scaled for igniting
-  far from the ground — real open item, not yet fixed**: `theta_throttle`
-  saturates at its max (`gimbal_limit_hover_deg(2)` = 60°) for however
-  long `h` stays large after ignition, because `delta_theta =
-  -(K_H*h_err + K_V*v_vertical)` with `K_H=-0.2` blows past `theta_max`
-  almost immediately once `h_err` is more than a few meters — the law was
-  evidently tuned assuming ignition happens within a few tens of meters
-  of the ground, not near apogee. At 60° tilt, `cos(60°)=0.5`, so half
-  the descent thrust is wasted sideways (and actively adds lateral drift)
-  for as long as saturation holds; useful braking only kicks in once `h`
-  drops enough for `delta_theta` to come off the rail. This is *why*
-  igniting earlier (higher up) doesn't keep improving touchdown vertical
-  velocity past a point, and why it makes lateral drift worse the higher
-  it's pushed (swept 15-76 m ignition altitude at the current ~76 m
-  apogee: touchdown lateral drift went from ~5.6 m to ~27 m as vertical
-  velocity improved from ~-36 to ~-16 m/s — a real Pareto tradeoff, not
-  noise). Properly fixing this needs the guidance law itself reworked
-  (e.g. clip/scale the `h_err` term, or gain-schedule `K_H` by altitude),
-  not just a gain or timing tweak — out of scope for this pass since it's
-  a `Controller` change beyond the gains already touched above; flagged
-  for a follow-up.
+- **[Superseded, see "Suicide-burn descent ignition" in Recent additions]
+  Descent guidance law (`descent_tilt_lqr`) wasn't scaled for igniting far
+  from the ground**: `theta_throttle` used to saturate at its max
+  (`gimbal_limit_hover_deg(2)` = 60°) for however long `h` stayed large
+  after ignition, because `delta_theta = -(K_H*h_err + K_V*v_vertical)`
+  with `K_H=-0.2` blew past `theta_max` almost immediately once `h_err`
+  was more than a few meters. This whole `h_err`-from-ignition law is gone
+  now, replaced by a full-thrust-then-fine-control law gated on a dynamic
+  ignition trigger instead of a fixed altitude - see Recent additions.
 - **Lateral drift fixed via LQR retuning, client-approved (touches
   `lqr_gain_design.m`, Umut's)**: was ~290 m by touchdown against a
   ~130-139 m apogee (root cause: pitch stayed near-vertical, but roll/yaw
@@ -123,6 +111,64 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 ## Recent additions
 
+- **Suicide-burn descent ignition + full-thrust-then-fine-control descent
+  throttle (client-proposed, `Thrust Status` + `descent_tilt_lqr` touched)**:
+  replaces the old fixed `descent_ignition_altitude_m` (76 m) and the
+  continuous-from-ignition `h_err`/`v_vertical` throttle law entirely.
+  - **Ignition is now a real-time trigger, not a constant**:
+    `Thrust Status` ignites the descent motors the instant remaining
+    altitude `h` drops to the distance needed to brake the current fall
+    speed to zero using full (untilted) descent thrust, plus a safety
+    margin - `stopping_distance = vertical_velocity^2 / (2*a_brake)`,
+    `a_brake = (T_total_nominal - mass_live*g) / mass_live`. This adapts
+    automatically to whatever velocity disturbances actually produced at
+    a given altitude, instead of assuming a nominal trajectory (the
+    client's insight: a perfectly-timed open-loop burn is fragile because
+    real conditions - wind, lateral-guidance thrust diversion - eat into
+    the vertical margin the timing calc assumed). New `rocket.g`,
+    `rocket.descent_T_total_nominal` (derived from the descent CSV's own
+    first row, not duplicated), and `rocket.descent_ignition_margin_m`
+    fields; `Thrust` gained a `Mass` inport (root `Mass` tag, already
+    computed elsewhere) to feed this calc.
+  - **`descent_tilt_lqr` now commands full thrust (`theta_throttle=0`,
+    zero collective tilt) until a latch trips, then switches permanently
+    to fine velocity control** (`v_target = -h / (remaining_fuel_time_s -
+    reserve_time)`, same structure client sent in `ThrottleFunction.txt`).
+    The latch trips on `h <= hover_altitude_m` **or** `v_vertical >= 0`,
+    whichever comes first - checking velocity too (not just altitude)
+    matters because the ignition margin is deliberately generous, so
+    velocity can reach ~0 well above `hover_altitude_m`.
+  - **Found and fixed a bad chattering bug during implementation**: an
+    earlier version re-evaluated the full-thrust-vs-fine-control condition
+    every timestep instead of latching it. Full thrust decelerates the
+    vehicle through `v=0`, which instantly re-satisfied "still falling ->
+    full thrust", so it flipped back, decelerated again, flipped again,
+    etc. - this slammed the collective gimbal angle back and forth fast
+    enough to destabilize attitude badly (pitch measured dropping to ~8°
+    at one point, roll spinning through 180°+ repeatedly), which showed up
+    as touchdown lateral drift over 40 m despite vz looking fine. Fixed
+    with a one-way `persistent` latch (same pattern as `LiftoffArm`) -
+    `MATLAB Function2` now needs `SystemSampleTime=0.001` for the same
+    persistent-variable reason `Thrust Status` already does.
+  - Swept `descent_ignition_margin_m` 5-35 m against an 8-seed Monte Carlo:
+    | margin (m) | vz mean/worst (m/s) | drift mean/worst (m) |
+    |---|---|---|
+    | 5 | -10.20 / -19.58 | 11.98 / 18.47 |
+    | 10 | -8.16 / -16.95 | 16.89 / 28.72 |
+    | 15 | -7.22 / -14.01 | 15.19 / 29.05 |
+    | **20 (committed)** | **-4.17 / -10.58** | **13.63 / 20.55** |
+    | 25 | -5.20 / -8.19 | 17.09 / 35.65 |
+    | 30 | -8.19 / -14.26 | 12.75 / 28.79 |
+    | 35 | -10.22 / -15.46 | 11.62 / 19.47 |
+    20 m picked as the committed point: best mean vz, second-best
+    worst-case vz (within 2.4 m/s of 25 m's), and best worst-case lateral
+    drift. Non-monotonic neighbors beyond 25 m are the same
+    touchdown-proximity chaos already documented in Known limitations, not
+    a new issue - don't trust a single point here either.
+  - **Net result vs. the previously-committed continuous law**: vz
+    mean/worst improved from -9.8/-14.9 to -4.17/-10.58 m/s; lateral
+    drift worst-case improved from 28.7 to 20.55 m (mean about the same).
+    A real improvement on both axes, not a tradeoff.
 - **Fixed TVC mixer's thrust-allocation Jacobian, mis-linearized around
   zero instead of the current collective-tilt operating point
   (`tvc_controller_dcm`, Umut's file, touched)**: `allocation_matrix`

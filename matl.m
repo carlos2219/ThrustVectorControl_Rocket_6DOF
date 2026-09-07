@@ -66,6 +66,9 @@ for i = 1:rocket.n_engines
                         rocket.r_arm * sin(azimuth_angle)];
 end
 
+%% Environment
+rocket.g = 9.81;    % m/s^2, single-sourced (used by descent ignition timing and hover throttle)
+
 %% Attitude reference
 % Not measured. 89.9 (not exactly 90) so the plant's initial condition
 % (Rocket/6DOF (Quaternion) eul_0, set to deg2rad(rocket.launch_pitch_deg))
@@ -87,9 +90,27 @@ rocket.ascent_thrust_curve_t = curveTbl.time_seconds';
 rocket.ascent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];
 rocket.t_burn_ascent = rocket.ascent_thrust_curve_t(end);   % tracks the CSV's last timestamp
 
-rocket.descent_ignition_altitude_m = 76;    % m, near apogee - minimizes unpowered-coast tumble before ignition (see DEVELOPMENT_NOTES.md)
 rocket.t_burn_descent = 10;                 % s, client-confirmed
-rocket.hover_altitude_m = 1;                % m, descent hover-equilibrium target (client-requested)
+rocket.hover_altitude_m = 1;                % m, below this the fine velocity-feedback throttle takes over
+
+% Descent-motor ignition is no longer a fixed altitude - it's a real-time
+% "suicide burn" trigger (client-proposed): ignite the instant the
+% remaining altitude equals the distance needed to brake the current fall
+% speed to a stop using full (untilted) descent thrust, plus a safety
+% margin. This is computed in `Thrust Status` (needs live mass + gravity +
+% nominal descent thrust, see below); the old fixed
+% `descent_ignition_altitude_m` is gone (superseded, see DEVELOPMENT_NOTES.md).
+% `descent_ignition_margin_m` is the extra stopping distance added on top
+% of the bare-minimum brake distance, so real disturbances (wind, lateral
+% correction stealing vertical thrust budget) don't eat the whole margin -
+% the vehicle should still be moving slowly, not exactly at rest, when it
+% reaches `hover_altitude_m`, leaving `descent_hover_K_V`/remaining burn
+% time to finish the job. Swept 5-35 m against an 8-seed Monte Carlo (see
+% DEVELOPMENT_NOTES.md): 20 m is the committed point (best mean vz, second
+% -best worst-case vz, best worst-case lateral drift - non-monotonic
+% neighbors beyond 25 m are the same touchdown-proximity chaos already
+% documented elsewhere in this file, not a bug).
+rocket.descent_ignition_margin_m = 20;
 
 % Hover-throttle feedback gains (descent_tilt_lqr) - used to be hardcoded
 % inside the MATLAB Function block, violating this project's own
@@ -122,6 +143,11 @@ rocket.lateral_guidance_max_tilt_deg = 20;
 curveTbl = readtable(fullfile(thrustDataDir, 'thrust_data_descent_clean.csv'));
 rocket.descent_thrust_curve_t = curveTbl.time_seconds';
 rocket.descent_thrust_curve_N = [curveTbl.thrust_m1_N'; curveTbl.thrust_m2_N'; curveTbl.thrust_m3_N'];
+
+% Total descent thrust at ignition (t'=0 on the descent curve), used by
+% the suicide-burn ignition trigger to estimate available braking
+% deceleration before the descent motors have actually fired.
+rocket.descent_T_total_nominal = sum(rocket.descent_thrust_curve_N(:,1));
 
 %% Gimbal limits
 rocket.gimbal_limit_ascent_deg = [-10, 10];
