@@ -123,6 +123,30 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 ## Recent additions
 
+- **Fixed TVC mixer's thrust-allocation Jacobian, mis-linearized around
+  zero instead of the current collective-tilt operating point
+  (`tvc_controller_dcm`, Umut's file, touched)**: `allocation_matrix`
+  (used to compute `delta_lqr = pinv(allocation_matrix) * M_cmd`) built
+  each motor's per-gimbal force-direction derivatives (`dF_dalpha`/
+  `dF_dbeta`) as if the motor pointed straight along the body axis
+  (`throttle_angle=0`) — correct during ascent, but during descent
+  collective tilt (`throttle_angle`) reaches up to 60°, so the LQR
+  attitude correction added on top of that tilt was computed against the
+  wrong local slope. The zero-point Jacobian doesn't account for how much
+  a gimbal change near a large tilt also changes the motor's *axial*
+  thrust component, so `delta_lqr` was silently stealing net vertical
+  thrust from the throttle command without either loop seeing it happen.
+  Fixed by rebuilding `dF_dalpha`/`dF_dbeta` from each motor's actual
+  nominal direction (`alpha_nominal(i)`/`beta_nominal(i)`, already
+  computed for the throttle-only collective tilt) instead of the origin,
+  so the allocation matrix now reflects the true local slope at whatever
+  tilt the vehicle is actually flying at. Verified analytically
+  (moment-tracking error at a 35° tilt drops from 0.0063 to 0.0003 N·m,
+  ~18x) and by resimulating across multiple noise seeds (no regression).
+  No interface change — same inputs/outputs, no new ports. This
+  supersedes the "audited and confirmed correct" claim about this same
+  matrix further down this file (see the Plant audit bullet) — that
+  audit only checked the zero-tilt case.
 - **[Branch `controller-detumble-experiment`] Discovered the single-seed
   touchdown numbers reported earlier in this file were not representative
   - re-evaluated everything with an 8-seed Monte Carlo instead**: varying
@@ -575,7 +599,12 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
   - **Also audited and confirmed correct, not bugs**: the TVC allocation
     matrix in `tvc_controller_dcm` is exactly the small-angle linearization
     of the actual nonlinear thrust-vector model in `rocket_forces_moments`
-    (checked term-by-term); `AssembleRCG`'s dynamic CG tracking already
+    (checked term-by-term) — **partially superseded, see the TVC mixer fix
+    at the top of Recent additions**: this audit only checked the
+    zero-collective-tilt case (true during ascent); at nonzero
+    `throttle_angle` (descent hover, up to 60°) the same zero-point
+    linearization was mis-allocating thrust between axial and lateral
+    components, since fixed; `AssembleRCG`'s dynamic CG tracking already
     used live `x_cg` correctly (the mass-bug pattern above did *not*
     recur there); the 6DOF block's `vre_flag=off` is correct (thrust is
     modeled as an explicit applied force, so mass-flow relative-velocity

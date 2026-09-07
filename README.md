@@ -1,25 +1,18 @@
-# TVC Rocket 6DOF Simulation
+# TVC Rocket — 6DOF Flight Simulation
 
-A MATLAB/Simulink 6DOF flight simulation of a three-motor thrust-vector-control
-(TVC) rocket burning KNSB propellant. Freelance project for client Kruthick
-Jothimani, built with milestone-based, open-source-intent, "keep it simple"
-design philosophy. Physical rocket parameters are not final; the client's
-rocket is still under construction.
+![MATLAB](https://img.shields.io/badge/MATLAB-Simulink-orange)
+![Status](https://img.shields.io/badge/status-active%20development-blue)
+![Focus](https://img.shields.io/badge/focus-ascent-lightgrey)
 
-## Getting started
+A 6DOF flight simulator for a three-motor thrust-vector-controlled (TVC)
+rocket, built in MATLAB/Simulink. LQR/DCM attitude control, live mass/
+inertia tracking, and closed-loop guidance from liftoff through landing.
 
-1. Open `rocket_upwork.slx` in Simulink.
-2. **Set MATLAB's current working folder to the project root before opening
-   or updating the model.** The model's `InitFcn` calls `matl;` (see
-   `matl.m`), which only resolves with the project root as the working
-   directory — otherwise every `Constant` block that reads `rocket.*` will
-   error with "Invalid setting for parameter 'Value'".
-3. Run/update the diagram as usual from there.
+Freelance build for client Kruthick Jothimani — milestone-based,
+open-source-intent, "keep it simple" design. Physical rocket parameters
+are not final; the real hardware is still under construction.
 
-## Architecture
-
-High-level signal flow (see `MODEL_WALKTHROUGH.md` for the detailed,
-block-by-block version with each subsystem's internals):
+## How it works
 
 ```mermaid
 flowchart LR
@@ -38,40 +31,36 @@ flowchart LR
     ROCKET -.-> ANIM[Animation]
 ```
 
-Solid arrows are part of the closed control loop; dashed arrows are
-read-only consumers (safety logic, scopes, 3D viewer) that don't feed
-anything back. This diagram is plain text (Mermaid) inside this file —
-edit the fenced code block above directly, no external tool needed, and
-it re-renders automatically wherever the repo is viewed on GitHub.
+Solid arrows are the closed control loop; dashed arrows are read-only
+consumers (safety logic, scopes, 3D viewer) that don't feed anything
+back. Full block-by-block detail lives in `MODEL_WALKTHROUGH.md`.
 
-## Repository layout
+## Quick start
 
-- `rocket_upwork.slx` — the canonical master model (single source of
-  truth for all simulation work).
-- `matl.m` — the model's `InitFcn` source; builds the `rocket` struct
-  (mass, geometry, CG/CP, propellant, thrust curves, LQR gains, etc.).
-- `lqr_gain_design.m` — computes the LQR gain matrix used by the
-  controller.
-- `thrust_data_ascent_clean.csv` / `thrust_data_descent_clean.csv` —
-  cleaned static motor test data used to build the thrust curves.
-  **Current focus is ascent only:** the descent file is a placeholder
-  (duplicate of the ascent data) pending real descent motor test data —
-  descent motors still run on a flat nominal-thrust placeholder.
-- `MODEL_WALKTHROUGH.md` — a guided, physical/logical-flow explanation of how
-  the model works (plant, 6DOF integration, controller, actuator), meant to
-  be read on its own without opening Simulink.
-- `DEVELOPMENT_NOTES.md` — design decisions, known limitations, and coding
-  conventions for this project. Read this before making non-trivial changes.
+1. Open `rocket_upwork.slx` in Simulink.
+2. Set MATLAB's current folder to the project root **first** — the
+   model's `InitFcn` runs `matl.m`, which won't resolve otherwise.
+3. Run or update the diagram as usual.
+
+## What's inside
+
+| File | Purpose |
+|---|---|
+| `rocket_upwork.slx` | canonical master model |
+| `matl.m` | single source of truth for every plant parameter |
+| `lqr_gain_design.m` | offline LQR gain design |
+| `thrust_data_*_clean.csv` | motor thrust curves (descent is still a placeholder — see Status) |
+| `MODEL_WALKTHROUGH.md` | guided tour of the model, block by block |
+| `DEVELOPMENT_NOTES.md` | design decisions, known limitations, conventions |
 
 ## Requirements
 
-- MATLAB and Simulink (a recent release).
-- Aerospace Blockset (6DOF integration block).
-- Stateflow (MATLAB Function blocks used throughout the model).
+- MATLAB + Simulink (recent release)
+- Aerospace Blockset
+- Stateflow
 
 ## Status
 
-Active development, Milestone 1, currently focused on the ascent stage only
-(descent thrust is still a flat placeholder, see Repository layout above).
-See `DEVELOPMENT_NOTES.md`'s "Known limitations" section for the current
-list of open items and simplifications.
+Milestone 1, ascent-focused. Descent thrust is still a flat placeholder
+pending real motor test data. See `DEVELOPMENT_NOTES.md`'s "Known
+limitations" for the full list of open items.

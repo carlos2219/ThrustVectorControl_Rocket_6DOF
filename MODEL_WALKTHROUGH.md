@@ -304,9 +304,13 @@ skew-symmetric part of `DCM_be * DCM_reference'`, valid for small errors),
 feeds `[attitude_error; rate]` into an LQR feedback law
 (`M_cmd = -K * state_error`, `K` designed offline by `lqr_gain_design.m`),
 then allocates that commanded moment across the 3 motors' gimbal axes via a
-pseudo-inverse allocation matrix, clamped to gimbal limits. During descent,
-a separate collective "throttle angle" (below) is added on top as a
-feedforward term.
+pseudo-inverse allocation matrix, clamped to gimbal limits. The allocation
+matrix is linearized around each motor's current nominal (throttle-only)
+direction, not around zero — needed because collective tilt during descent
+reaches up to 60°, where a zero-point linearization would misallocate
+thrust between the axial and lateral components (see
+`DEVELOPMENT_NOTES.md`'s TVC mixer fix). During descent, a separate
+collective "throttle angle" (below) is added on top as a feedforward term.
 
 **Descent hover throttle** (`Descent Throttle/MATLAB Function2`,
 `descent_tilt_lqr`): since the solid motors can't be throttled by reducing
@@ -333,8 +337,12 @@ deflection that actually feeds `rocket_forces_moments`.
 Quick reference - see `DEVELOPMENT_NOTES.md`'s "Known limitations" for more
 context on each:
 
-- Three different `DCM_ref` values exist in this codebase; only one (a
-  hardcoded literal in the TVC controller) is actually live.
+- `DCM_ref` is single-sourced from `rocket.DCM_ref` (`matl.m`) — no
+  hardcoded literal remains in the TVC controller. During descent (phase
+  3 only), `Lateral Guidance` biases this base value off-vertical toward
+  killing horizontal position/velocity error before it reaches the TVC
+  controller; outside phase 3 (or with lateral guidance disabled) the TVC
+  controller sees `rocket.DCM_ref` unchanged.
 - `I(t)` has no parallel-axis correction for the CG shift. `Ixx`
   (LQR-facing) is still an unmeasured placeholder; `Iyy`/`Izz` are measured.
 - The model is numerically chaotic near touchdown/hard impact - don't
