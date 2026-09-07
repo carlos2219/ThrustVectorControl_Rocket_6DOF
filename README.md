@@ -16,6 +16,34 @@ rocket is still under construction.
    error with "Invalid setting for parameter 'Value'".
 3. Run/update the diagram as usual from there.
 
+## Architecture
+
+High-level signal flow (see `MODEL_WALKTHROUGH.md` for the detailed,
+block-by-block version with each subsystem's internals):
+
+```mermaid
+flowchart LR
+    THRUST["Thrust<br/>(per-motor thrust curves +<br/>flight-phase state machine)"]
+    CONTROLLER["Controller<br/>(LQR attitude + descent<br/>throttle + lateral guidance)"]
+    ROCKET["Rocket<br/>(servo actuators + force/moment<br/>mixer + 6DOF integration)"]
+
+    THRUST -->|T_per_engine| CONTROLLER
+    THRUST -->|T_per_engine| ROCKET
+    CONTROLLER -->|alpha, beta| ROCKET
+    ROCKET -->|attitude, rate,<br/>position, velocity| CONTROLLER
+    ROCKET -->|height, velocity| THRUST
+
+    ROCKET -.-> FT[Flight Termination]
+    ROCKET -.-> MON[Simulation Monitoring]
+    ROCKET -.-> ANIM[Animation]
+```
+
+Solid arrows are part of the closed control loop; dashed arrows are
+read-only consumers (safety logic, scopes, 3D viewer) that don't feed
+anything back. This diagram is plain text (Mermaid) inside this file —
+edit the fenced code block above directly, no external tool needed, and
+it re-renders automatically wherever the repo is viewed on GitHub.
+
 ## Repository layout
 
 - `rocket_upwork.slx` — the canonical master model (single source of

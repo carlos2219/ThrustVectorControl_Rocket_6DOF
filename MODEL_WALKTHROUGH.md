@@ -12,52 +12,80 @@ something is a placeholder or simplification, it's called out inline.
 
 ## 1. High-level signal flow
 
-```
-        ┌─────────────────────────────────────────────────────────────┐
-        │                                                               │
-        v                                                               │
-  ┌───────────┐    F_total, M_total    ┌──────────────┐   Xe,Ve,DCMbe,  │
-  │  PLANT    │────────────────────────>│  6DOF         │   Euler,      │
-  │ (forces/  │   (body-frame N, N-m)   │  INTEGRATION  │───omega_be────┤
-  │  moments) │                         │ (Quaternion)  │                │
-  └───────────┘                         └──────────────┘                │
-        ^                                       │                       │
-        │ T (per-motor thrust)                  │ DCMbe, omega_be       │
-        │ alpha, beta (gimbal angles)            │ (attitude + rate)    │
-        │                                        v                      │
-  ┌───────────┐    alpha_cmd, beta_cmd   ┌──────────────┐               │
-  │ ACTUATOR  │<─────────────────────────│  CONTROLLER   │<──────────────┘
-  │ (servo    │                         │ (LQR/DCM TVC) │
-  │ dynamics) │                         └──────────────┘
-  └───────────┘
+```mermaid
+flowchart TB
+    subgraph THRUST["Thrust (root level)"]
+        direction TB
+        PHASE["Thrust Status<br/>(phase state machine:<br/>ascent → coast → descent → done)"]
+        LUT["Per-motor thrust lookup<br/>(ascent / descent CSVs)"]
+        PHASE --> LUT
+    end
+
+    subgraph CONTROLLER["Controller (Umut's design)"]
+        direction TB
+        LG["Lateral Guidance<br/>(lateral_guidance_dcm)<br/>descent-only, biases DCM_reference<br/>on X/Y position + velocity error"]
+        DT["Descent Throttle<br/>(descent_tilt_lqr)<br/>descent-only, collective<br/>gimbal 'throttle' angle"]
+        TVC["TVC DCM Controller<br/>(tvc_controller_dcm)<br/>LQR attitude law +<br/>thrust allocation"]
+        LG -->|biases DCM_reference| TVC
+        DT -->|theta_throttle| TVC
+    end
+
+    subgraph ROCKET["Rocket (plant)"]
+        direction TB
+        SERVO["Servo Actuator x3<br/>(gimbal bandwidth/rate-limit/delay)"]
+        FM["Forces and Moments<br/>(thrust mixer + gravity +<br/>ground reaction; live mass/CG via<br/>MassInertiaModel / AssembleRCG)"]
+        SIXDOF["6DOF (Quaternion)<br/>rigid-body integration"]
+        SERVO --> FM --> SIXDOF
+    end
+
+    LUT -->|T_per_engine| ROCKET
+    LUT -->|T_per_engine| CONTROLLER
+    CONTROLLER -->|"alpha, beta<br/>(gimbal commands)"| SERVO
+
+    SIXDOF -->|DCM_be, omega_be, Ve, Xe, h| CONTROLLER
+    SIXDOF -->|height, Velocity| THRUST
+
+    SIXDOF -.->|h| FT["Flight Termination<br/>(LiftoffArm — arms/disarms<br/>touchdown detection)"]
+    SIXDOF -.->|state + telemetry| MON["Simulation Monitoring<br/>(scopes only)"]
+    SIXDOF -.->|DCM, Euler, Position| ANIM["Animation<br/>(3D visualization only)"]
 ```
 
 Thrust generation (`Thrust`, section 3) lives at root level, alongside
 `Rocket`, not inside it — it reads `height`/`Velocity` off the same root
 Goto/From bus every other subsystem reads, and writes its per-motor
-`T_per_engine` output onto the root bus, which `Rocket` takes in as an
-inport straight into the plant's force/moment mixer. `Rocket` itself is a
-pure force/moment integrator with no thrust-generation logic of its own.
+`T_per_engine` output onto the root bus, which both `Controller` (for
+thrust allocation) and `Rocket` (straight into the plant's force/moment
+mixer) take in as an inport.
 
 One paragraph per stage:
 
-- **Plant (forces/moments):** combines per-motor thrust (gimbal-rotated,
-  fed in from the root-level `Thrust` subsystem), aerodynamic force/moment,
-  gravity, and (near the ground) a launch-pad reaction force into one net
-  body-frame force `F_total` and moment `M_total` each timestep. Also
-  computes the vehicle's time-varying mass and inertia as propellant burns.
-- **6DOF integration:** takes `F_total`, `M_total`, and the current
-  mass/inertia, integrates the rigid-body equations of motion (quaternion
-  attitude representation), and outputs the vehicle's position, velocity,
-  attitude, and angular rate.
-- **Controller:** reads the vehicle's current attitude (`DCMbe`) and angular
-  rate (`omega_be`), compares against a reference attitude, and computes
-  corrective per-motor gimbal angle commands (`alpha`, `beta`) via an LQR
-  law and thrust allocation.
-- **Actuator:** models the physical gimbal servo's response (bandwidth, rate
-  limit, delay) between the controller's *commanded* angles and the
-  *physically realized* angles that actually deflect the motors, which feed
-  back into the plant's thrust vector calculation.
+- **Thrust:** a flight-phase state machine (`Thrust Status`: ascent →
+  coast → descent → done) drives which per-motor thrust curve (ascent or
+  descent CSV) is active each timestep; output is `T_per_engine`, read by
+  both `Controller` and `Rocket`.
+- **Controller:** reads the vehicle's current attitude (`DCM_be`) and
+  angular rate (`omega_be`), compares against a reference attitude, and
+  computes corrective per-motor gimbal angle commands (`alpha`, `beta`) via
+  an LQR law and thrust allocation (`TVC DCM Controller`). During descent
+  only, two feedforward terms are added on top: a collective "throttle"
+  tilt from `Descent Throttle` (net vertical thrust control, since the
+  solid motors can't be throttled directly) and a small off-vertical bias
+  from `Lateral Guidance` (closes the horizontal position/velocity loop
+  that nothing else in this architecture handles).
+- **Rocket (plant):** the controller's *commanded* `alpha`/`beta` first
+  pass through `Servo Actuator` (models the physical gimbal servo's
+  bandwidth, rate limit, and delay) to get the *physically realized*
+  angles; `Forces and Moments` combines per-motor thrust (gimbal-rotated),
+  aerodynamic force/moment (currently disabled), gravity, and a launch-pad
+  ground-reaction force into one net body-frame force `F_total` and moment
+  `M_total` each timestep, using the vehicle's live time-varying mass and
+  inertia as propellant burns; `6DOF (Quaternion)` integrates the rigid-body
+  equations of motion and outputs position, velocity, attitude, and
+  angular rate, which close the loop back into `Controller` and `Thrust`.
+- **Flight Termination / Simulation Monitoring / Animation:** read-only
+  consumers of the plant's state (touchdown-detection arming, review
+  scopes, 3D viewer respectively) — none of them feed anything back into
+  the control loop.
 
 ## 2. Mass & inertia (`MassInertiaModel`)
 
