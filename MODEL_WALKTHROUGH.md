@@ -85,7 +85,9 @@ One paragraph per stage:
 - **Flight Termination / Simulation Monitoring / Animation:** read-only
   consumers of the plant's state (touchdown-detection arming, review
   scopes, 3D viewer respectively) — none of them feed anything back into
-  the control loop.
+  the control loop. `Animation` is commented out (disabled) by default
+  to keep iteration fast; re-enable it from the canvas or
+  `set_param(...,'Commented','off')` when an actual 3D check is wanted.
 
 ## 2. Mass & inertia (`MassInertiaModel`)
 
@@ -362,10 +364,14 @@ context on each:
 - The TVC controller's thrust-allocation `r_cg` is static (frozen at t=0),
   not the dynamic burn-tracking one used by the plant's force/moment
   mixing - a real asymmetry, not yet reconciled.
-- A few `rocket.*` fields are unused or informational-only (see
-  `DEVELOPMENT_NOTES.md`): `gimbal_limit_ascent_deg`/`gimbal_limit_hover_deg`,
-  `engine_pivot_x_from_cg`, `T_total_nominal`, `m_prop_ascent_each`/
-  `descent_each`, `burn_rate_each`.
+- A few `rocket.*` fields exist only as intermediates inside `matl.m` (feed
+  other `rocket.*` fields, not any Simulink block directly): `m_prop_total`
+  from `m_prop_ascent_each`/`descent_each`; `r_cg` from
+  `engine_pivot_x_from_cg`. `gimbal_limit_ascent_deg`/`gimbal_limit_hover_deg`
+  are genuinely live (single-sourced into `TVC DCM Controller`/`Descent
+  Throttle`, see `DEVELOPMENT_NOTES.md`), not unused — corrected here, this
+  bullet used to claim otherwise. `T_total_nominal`/`burn_rate_each` no
+  longer exist (removed as dead fields, see `DEVELOPMENT_NOTES.md`).
 - `Rocket` still has an internal `Ve`/`Xe` Goto/From pair (from the 6DOF
   block, into `Forces and Moments`' `GroundReaction`) that looks similar in
   shape to the Goto/From pair that used to feed the old in-`Rocket` thrust

@@ -119,6 +119,10 @@ rocket.descent_ignition_margin_m = 20;
 % of K_V near this value (a real minimum, not a smooth one - the
 % touchdown-proximity chaos already documented elsewhere applies here
 % too), so don't nudge this without re-sweeping and checking neighbors.
+% K_H is now dead: the suicide-burn descent throttle law (see
+% DEVELOPMENT_NOTES.md) replaced the old h_err-based formula that used it
+% with a v_target-only fine-control law - kept only so descent_tilt_lqr's
+% existing input port doesn't need removing.
 rocket.descent_hover_K_H = -0.2;
 rocket.descent_hover_K_V = -0.31;
 

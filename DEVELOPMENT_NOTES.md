@@ -111,6 +111,27 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
 
 ## Recent additions
 
+- **`Animation` disabled by default (`Commented='on'`), and a new
+  `AttitudeUnwrap` display-only fix for the `Attitude (Euler)` scope**:
+  - `Animation` (the `6DoF Animation` viewer) is commented out rather than
+    deleted - it noticeably slows down iteration during testing/tuning, so
+    it's off by default now but still present in the model for whenever a
+    3D visual check is actually wanted (re-enable via
+    `set_param('rocket_upwork/Animation','Commented','off')` or from the
+    Simulink canvas). No other subsystem depends on its output (it has no
+    outports), so disabling it doesn't affect simulation results.
+  - `Simulation Monitoring/AttitudeUnwrap` (new, sits between `EulerDeg`
+    and `EulerDemux`) applies a causal (running) angle unwrap in degrees
+    before the `Attitude (Euler)` scope's per-axis demux: roll and yaw
+    regularly spin through +/-180 deg (roll especially, see "Lateral
+    drift fixed via LQR retuning" above for why it's the sacrificed axis),
+    which otherwise reads as a false vertical jump on a plain degrees
+    plot even though nothing physically discontinuous happened. Same
+    **display-only** precedent as the `Position (Xe)`/`Velocity (Ve)`
+    Z-sign flip elsewhere in this subsystem - doesn't touch the real
+    Euler/DCM signals used by the controller or anything else. Persistent
+    `MATLAB Function`/Stateflow state, so it needs the same explicit
+    discrete `SystemSampleTime` (`0.001`) as `Thrust Status`/`LiftoffArm`.
 - **Suicide-burn descent ignition + full-thrust-then-fine-control descent
   throttle (client-proposed, `Thrust Status` + `descent_tilt_lqr` touched)**:
   replaces the old fixed `descent_ignition_altitude_m` (76 m) and the
@@ -137,7 +158,10 @@ explanation of what the model does, see `MODEL_WALKTHROUGH.md`.
     The latch trips on `h <= hover_altitude_m` **or** `v_vertical >= 0`,
     whichever comes first - checking velocity too (not just altitude)
     matters because the ignition margin is deliberately generous, so
-    velocity can reach ~0 well above `hover_altitude_m`.
+    velocity can reach ~0 well above `hover_altitude_m`. `K_H` is now
+    dead - the new fine-control law only uses `K_V`, not the old
+    `h_err`-based formula `K_H` fed into - kept as a `matl.m` field and
+    block input only to avoid removing `descent_tilt_lqr`'s interface.
   - **Found and fixed a bad chattering bug during implementation**: an
     earlier version re-evaluated the full-thrust-vs-fine-control condition
     every timestep instead of latching it. Full thrust decelerates the
